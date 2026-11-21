@@ -42,6 +42,7 @@ import {
   exportPageToSVG,
   FSFileHandle,
   getLastActiveNotebookId,
+  isTopLevelWindow,
   listNotebooks,
   parseInkboardJSON,
   saveAsInkboardFile,
@@ -348,7 +349,7 @@ export default function App() {
   }, [doc, linkedFileHandle, showToast]);
 
   const handleOpenFileTrigger = useCallback(async () => {
-    if ('showOpenFilePicker' in window) {
+    if (isTopLevelWindow() && 'showOpenFilePicker' in window) {
       try {
         const picker = (window as unknown as {
           showOpenFilePicker: (opts: unknown) => Promise<(FSFileHandle & { getFile(): Promise<File> })[]>;
@@ -356,8 +357,11 @@ export default function App() {
         const [handle] = await picker({
           types: [
             {
-              description: 'InkBoard Web Project (.scrbleweb, .inkboard)',
-              accept: { 'application/json': ['.scrbleweb', '.inkboard', '.json'] },
+              description: 'InkBoard Web Project (.scrbleweb, .inkboard, .json)',
+              accept: {
+                'application/octet-stream': ['.scrbleweb', '.inkboard'],
+                'application/json': ['.json', '.scrbleweb', '.inkboard'],
+              },
             },
           ],
           multiple: false,
@@ -417,16 +421,17 @@ export default function App() {
 
   const handleSaveAsDiskFile = async (
     newTitle: string,
-    ext: '.inkboard' | '.scrbleweb' = '.scrbleweb'
+    ext: '.inkboard' | '.scrbleweb' | '.json' = '.scrbleweb'
   ) => {
     const updated = { ...doc, title: newTitle, updatedAt: Date.now() };
     setDoc(updated);
-    const handle = await saveAsInkboardFile(updated, newTitle, ext);
-    if (handle) {
-      setLinkedFileHandle(handle);
-      showToast(`Đã lưu tệp ${handle.name}`);
+    const result = await saveAsInkboardFile(updated, newTitle, ext);
+    if (!result.filename) return;
+    if (result.handle) {
+      setLinkedFileHandle(result.handle);
+      showToast(`Đã lưu tệp ${result.filename}`);
     } else {
-      showToast(`Đã tải xuống ${newTitle}${ext}`);
+      showToast(`Đã tải "${result.filename}" vào thư mục Downloads (Ctrl+J để xem)`);
     }
   };
 
