@@ -42,7 +42,6 @@ import {
   exportPageToSVG,
   FSFileHandle,
   getLastActiveNotebookId,
-  isTopLevelWindow,
   listNotebooks,
   parseInkboardJSON,
   saveAsInkboardFile,
@@ -348,41 +347,34 @@ export default function App() {
     setSaveStatus('saved');
   }, [doc, linkedFileHandle, showToast]);
 
-  const handleOpenFileTrigger = useCallback(async () => {
-    if (isTopLevelWindow() && 'showOpenFilePicker' in window) {
-      try {
-        const picker = (window as unknown as {
-          showOpenFilePicker: (opts: unknown) => Promise<(FSFileHandle & { getFile(): Promise<File> })[]>;
-        }).showOpenFilePicker;
-        const [handle] = await picker({
-          types: [
-            {
-              description: 'InkBoard Web Project (.scrbleweb, .inkboard, .json)',
-              accept: {
-                'application/octet-stream': ['.scrbleweb', '.inkboard'],
-                'application/json': ['.json', '.scrbleweb', '.inkboard'],
-              },
-            },
-          ],
-          multiple: false,
-        });
-        const file = await handle.getFile();
-        const text = await file.text();
-        const imported = parseInkboardJSON(text);
-        await saveNotebookToDB(imported);
-        setDoc(imported);
-        setLinkedFileHandle(handle);
-        window.history.replaceState(null, '', window.location.pathname);
-        setSelectedIds([]);
-        setViewport({ offsetX: 0, offsetY: 0, zoom: 1 });
-        showToast(`Đã mở tệp ${file.name}`);
-        return;
-      } catch (err) {
-        if ((err as DOMException)?.name === 'AbortError') return;
+  const importNotebookText = useCallback(
+    async (rawText: string, fileName: string) => {
+      const imported = parseInkboardJSON(rawText);
+      await saveNotebookToDB(imported);
+      await setLastActiveNotebookId(imported.id);
+      setDoc(imported);
+      setNotebooks((prev) => {
+        const filtered = prev.filter((n) => n.id !== imported.id);
+        return [imported, ...filtered].sort((a, b) => b.updatedAt - a.updatedAt);
+      });
+      setLinkedFileHandle(null);
+      window.history.replaceState(null, '', window.location.pathname);
+      setSelectedIds([]);
+      setViewport({ offsetX: 0, offsetY: 0, zoom: 1 });
+      const firstPage =
+        imported.pages.find((p) => p.id === imported.activePageId) || imported.pages[0];
+      if (firstPage) {
+        syncPaletteForTemplate(firstPage.template);
       }
-    }
+      setLibraryOpen(false);
+      showToast(`Đã mở tệp ${fileName}`);
+    },
+    [showToast, syncPaletteForTemplate]
+  );
+
+  const handleOpenFileTrigger = useCallback(() => {
     inkboardInputRef.current?.click();
-  }, [showToast]);
+  }, []);
 
   const handleImportFileFallback = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -390,16 +382,9 @@ export default function App() {
     if (!file) return;
     try {
       const text = await file.text();
-      const imported = parseInkboardJSON(text);
-      await saveNotebookToDB(imported);
-      setDoc(imported);
-      setLinkedFileHandle(null);
-      window.history.replaceState(null, '', window.location.pathname);
-      setSelectedIds([]);
-      setViewport({ offsetX: 0, offsetY: 0, zoom: 1 });
-      showToast(`Đã mở tệp ${file.name}`);
+      await importNotebookText(text, file.name);
     } catch {
-      showToast('Không thể đọc tệp bảng viết này.');
+      showToast('Không thể đọc tệp bảng viết này (tệp không đúng định dạng .scrbleweb / .inkboard).');
     }
   };
 
@@ -594,6 +579,7 @@ export default function App() {
     e.preventDefault();
     const file = e.dataTransfer.files?.[0];
     if (!file) return;
+    const lowerName = file.name.toLowerCase();
     if (file.type.startsWith('image/')) {
       const reader = new FileReader();
       reader.onload = () => {
@@ -601,17 +587,13 @@ export default function App() {
       };
       reader.readAsDataURL(file);
     } else if (
-      file.name.endsWith('.inkboard') ||
-      file.name.endsWith('.scrbleweb') ||
-      file.name.endsWith('.json')
+      lowerName.endsWith('.inkboard') ||
+      lowerName.endsWith('.scrbleweb') ||
+      lowerName.endsWith('.json')
     ) {
       file.text().then(async (txt) => {
         try {
-          const imported = parseInkboardJSON(txt);
-          await saveNotebookToDB(imported);
-          setDoc(imported);
-          window.history.replaceState(null, '', window.location.pathname);
-          showToast(`Đã mở ${file.name}`);
+          await importNotebookText(txt, file.name);
         } catch {
           showToast('Tệp không hợp lệ.');
         }
