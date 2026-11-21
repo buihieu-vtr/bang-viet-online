@@ -202,7 +202,8 @@ export async function saveAsInkboardFile(
 }
 
 export function parseInkboardJSON(raw: string): NotebookDocument {
-  const parsed = JSON.parse(raw) as NotebookDocument;
+  const cleaned = raw.replace(/^\uFEFF/, '').trim();
+  const parsed = JSON.parse(cleaned) as NotebookDocument;
   if (!parsed || !Array.isArray(parsed.pages) || parsed.pages.length === 0) {
     throw new Error('Tệp bảng viết không hợp lệ hoặc bị hỏng.');
   }
