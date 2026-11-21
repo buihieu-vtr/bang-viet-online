@@ -16,7 +16,7 @@ interface SaveAsModalProps {
   currentTitle: string;
   onOpenWebLink: () => void;
   onSaveAsCopyInLibrary: (newTitle: string) => void;
-  onSaveAsDiskFile: (newTitle: string, ext: '.inkboard' | '.scrbleweb') => void;
+  onSaveAsDiskFile: (newTitle: string, ext: '.inkboard' | '.scrbleweb' | '.json') => void;
   onExportPNG: (transparent: boolean) => void;
   onExportSVG: () => void;
   onExportPDF: () => void;
@@ -34,7 +34,7 @@ export const SaveAsModal: React.FC<SaveAsModalProps> = ({
   onExportPDF,
 }) => {
   const [name, setName] = useState(currentTitle);
-  const [ext, setExt] = useState<'.scrbleweb' | '.inkboard'>('.scrbleweb');
+  const [ext, setExt] = useState<'.scrbleweb' | '.inkboard' | '.json'>('.scrbleweb');
 
   useEffect(() => {
     if (open) setName(currentTitle);
@@ -94,11 +94,12 @@ export const SaveAsModal: React.FC<SaveAsModalProps> = ({
               />
               <select
                 value={ext}
-                onChange={(e) => setExt(e.target.value as '.scrbleweb' | '.inkboard')}
+                onChange={(e) => setExt(e.target.value as '.scrbleweb' | '.inkboard' | '.json')}
                 className="h-10 px-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-xs font-mono-tabular text-slate-800 dark:text-slate-200 outline-none cursor-pointer"
               >
                 <option value=".scrbleweb">.scrbleweb</option>
                 <option value=".inkboard">.inkboard</option>
+                <option value=".json">.json</option>
               </select>
             </div>
           </div>
@@ -118,6 +119,9 @@ export const SaveAsModal: React.FC<SaveAsModalProps> = ({
               </span>
               <span className="font-mono-tabular text-slate-400">{ext}</span>
             </button>
+            <p className="text-[11px] text-slate-500 leading-relaxed px-1">
+              Tệp sẽ tự lưu vào thư mục <strong>Downloads (Tải xuống)</strong> (bấm <code className="font-mono-tabular">Ctrl+J</code> để mở nhanh). Nếu xem trong khung nhúng không thấy tải, hãy mở web ở tab trình duyệt riêng.
+            </p>
 
             <button
               type="button"
