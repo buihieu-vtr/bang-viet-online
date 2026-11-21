@@ -143,8 +143,17 @@ export interface FSFileHandle {
   }>;
 }
 
+export function isTopLevelWindow(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.self === window.top;
+  } catch {
+    return false;
+  }
+}
+
 export function supportsFileSystemAccess(): boolean {
-  return typeof window !== 'undefined' && 'showSaveFilePicker' in window;
+  return isTopLevelWindow() && 'showSaveFilePicker' in window;
 }
 
 export async function writeDocToFileHandle(
@@ -161,47 +170,61 @@ export function downloadBlob(blob: Blob, filename: string) {
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
+  a.rel = 'noopener';
+  a.style.display = 'none';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 1500);
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
 export async function saveAsInkboardFile(
   doc: NotebookDocument,
   suggestedName?: string,
-  extension: '.inkboard' | '.scrbleweb' = '.inkboard'
-): Promise<FSFileHandle | null> {
-  const safeName = (suggestedName || doc.title || 'BangViet')
-    .replace(/[^a-zA-Z0-9\u00C0-\u1EF9 _-]/g, '_')
-    .trim();
+  extension: '.inkboard' | '.scrbleweb' | '.json' = '.scrbleweb'
+): Promise<{ handle: FSFileHandle | null; filename: string }> {
+  const safeName =
+    (suggestedName || doc.title || 'BangViet')
+      .replace(/[^a-zA-Z0-9\u00C0-\u1EF9 _-]/g, '_')
+      .trim() || 'BangViet';
+  const filename = `${safeName}${extension}`;
+  const jsonText = JSON.stringify(doc, null, 2);
 
   if (supportsFileSystemAccess()) {
     try {
       const picker = (window as unknown as {
         showSaveFilePicker: (opts: unknown) => Promise<FSFileHandle>;
       }).showSaveFilePicker;
+      const mimeType =
+        extension === '.scrbleweb'
+          ? 'application/x-scrbleweb'
+          : extension === '.inkboard'
+            ? 'application/x-inkboard'
+            : 'application/json';
       const handle = await picker({
-        suggestedName: `${safeName}${extension}`,
+        suggestedName: filename,
         types: [
           {
             description: `InkBoard Web Project (${extension})`,
-            accept: { 'application/json': ['.inkboard', '.scrbleweb', '.json'] },
+            accept: { [mimeType]: [extension] },
           },
         ],
       });
       await writeDocToFileHandle(handle, doc);
-      return handle;
+      return { handle, filename: handle.name || filename };
     } catch (err) {
-      if ((err as DOMException)?.name === 'AbortError') return null;
+      if ((err as DOMException)?.name === 'AbortError') {
+        return { handle: null, filename: '' };
+      }
     }
   }
 
-  const blob = new Blob([JSON.stringify(doc, null, 2)], {
-    type: 'application/json',
+  // Synchronous download using application/octet-stream so browsers keep exact .scrbleweb/.inkboard extension
+  const blob = new Blob([jsonText], {
+    type: extension === '.json' ? 'application/json' : 'application/octet-stream',
   });
-  downloadBlob(blob, `${safeName}${extension}`);
-  return null;
+  downloadBlob(blob, filename);
+  return { handle: null, filename };
 }
 
 export function parseInkboardJSON(raw: string): NotebookDocument {
