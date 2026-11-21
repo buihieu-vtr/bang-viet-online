@@ -174,8 +174,10 @@ export function downloadBlob(blob: Blob, filename: string) {
   a.style.display = 'none';
   document.body.appendChild(a);
   a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  setTimeout(() => {
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, 10000);
 }
 
 export async function saveAsInkboardFile(
@@ -190,36 +192,8 @@ export async function saveAsInkboardFile(
   const filename = `${safeName}${extension}`;
   const jsonText = JSON.stringify(doc, null, 2);
 
-  if (supportsFileSystemAccess()) {
-    try {
-      const picker = (window as unknown as {
-        showSaveFilePicker: (opts: unknown) => Promise<FSFileHandle>;
-      }).showSaveFilePicker;
-      const mimeType =
-        extension === '.scrbleweb'
-          ? 'application/x-scrbleweb'
-          : extension === '.inkboard'
-            ? 'application/x-inkboard'
-            : 'application/json';
-      const handle = await picker({
-        suggestedName: filename,
-        types: [
-          {
-            description: `InkBoard Web Project (${extension})`,
-            accept: { [mimeType]: [extension] },
-          },
-        ],
-      });
-      await writeDocToFileHandle(handle, doc);
-      return { handle, filename: handle.name || filename };
-    } catch (err) {
-      if ((err as DOMException)?.name === 'AbortError') {
-        return { handle: null, filename: '' };
-      }
-    }
-  }
-
-  // Synchronous download using application/octet-stream so browsers keep exact .scrbleweb/.inkboard extension
+  // Direct synchronous browser download ensures the file immediately appears in Chrome Downloads (Ctrl+J)
+  // and avoids silent File System Access write blocks on protected Desktop/OneDrive folders.
   const blob = new Blob([jsonText], {
     type: extension === '.json' ? 'application/json' : 'application/octet-stream',
   });
