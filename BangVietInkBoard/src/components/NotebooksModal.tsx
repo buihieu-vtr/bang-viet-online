@@ -79,7 +79,7 @@ export const NotebooksModal: React.FC<NotebooksModalProps> = ({
               className="h-9 px-3 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-1.5 cursor-pointer"
             >
               <FolderOpen className="w-3.5 h-3.5" />
-              Mở tệp .inkboard
+              Mở tệp (.scrbleweb / .inkboard)
             </button>
             <button
               type="button"
@@ -90,6 +90,10 @@ export const NotebooksModal: React.FC<NotebooksModalProps> = ({
               Tạo bảng mới
             </button>
           </div>
+        </div>
+
+        <div className="px-5 py-2 bg-slate-50 dark:bg-slate-900/50 border-b border-slate-100 dark:border-slate-800 text-[11px] text-slate-500">
+          Mẹo: Để mở file đã tải về máy, bấm nút <strong>Mở tệp</strong> ở trên hoặc <strong>kéo-thả thẳng file</strong> từ thư mục Downloads vào màn hình bảng viết (không bấm đúp trực tiếp trên Windows).
         </div>
 
         <div className="flex-1 overflow-y-auto p-5">
