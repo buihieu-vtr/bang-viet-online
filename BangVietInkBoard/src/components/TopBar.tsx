@@ -1,0 +1,739 @@
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  BookOpen,
+  Check,
+  ChevronDown,
+  Download,
+  FileImage,
+  FilePlus,
+  FileText,
+  FolderOpen,
+  Globe,
+  HelpCircle,
+  Layers,
+  Maximize2,
+  Minimize2,
+  Moon,
+  PenLine,
+  Redo2,
+  Ruler,
+  Save,
+  SaveAll,
+  Shapes,
+  Smartphone,
+  Sun,
+  Undo2,
+} from 'lucide-react';
+import { PaperTemplate, PenSlot, ToolType } from '../types/inkboard';
+
+interface TopBarProps {
+  title: string;
+  onTitleChange: (title: string) => void;
+  canUndo: boolean;
+  canRedo: boolean;
+  onUndo: () => void;
+  onRedo: () => void;
+  penSlots: PenSlot[];
+  activeSlotId: string;
+  activeTool: ToolType;
+  onSelectPenSlot: (slot: PenSlot) => void;
+  onUpdatePenSlot: (slot: PenSlot) => void;
+  inkToShape: boolean;
+  onToggleInkToShape: () => void;
+  rulerVisible: boolean;
+  onToggleRuler: () => void;
+  stylusOnly: boolean;
+  onToggleStylusOnly: () => void;
+  darkMode: boolean;
+  onToggleDarkMode: () => void;
+  pagesDrawerOpen: boolean;
+  onTogglePagesDrawer: () => void;
+  pageIndex: number;
+  pageCount: number;
+  isFullscreen: boolean;
+  onToggleFullscreen: () => void;
+  onOpenLibrary: () => void;
+  onNewNotebook: () => void;
+  onOpenFile: () => void;
+  onSave: () => void;
+  onOpenSaveAs: () => void;
+  onOpenWebLink: () => void;
+  onOpenHelp: () => void;
+  activeSlug: string | null;
+  activeTemplate: PaperTemplate;
+  onQuickSwitchBoard: (tpl: PaperTemplate) => void;
+  onExportPNG: (transparent: boolean) => void;
+  onExportSVG: () => void;
+  onExportPDF: () => void;
+  saveStatus: 'saved' | 'saving';
+  linkedFileName: string | null;
+}
+
+const SWATCHES = [
+  '#0F172A',
+  '#334155',
+  '#FFFFFF',
+  '#FDE047',
+  '#F9A8D4',
+  '#7DD3FC',
+  '#2563EB',
+  '#059669',
+  '#DC2626',
+  '#EA580C',
+  '#FACC15',
+  '#9333EA',
+  '#EC4899',
+];
+
+export const TopBar: React.FC<TopBarProps> = ({
+  title,
+  onTitleChange,
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
+  penSlots,
+  activeSlotId,
+  activeTool,
+  onSelectPenSlot,
+  onUpdatePenSlot,
+  inkToShape,
+  onToggleInkToShape,
+  rulerVisible,
+  onToggleRuler,
+  stylusOnly,
+  onToggleStylusOnly,
+  darkMode,
+  onToggleDarkMode,
+  pagesDrawerOpen,
+  onTogglePagesDrawer,
+  pageIndex,
+  pageCount,
+  isFullscreen,
+  onToggleFullscreen,
+  onOpenLibrary,
+  onNewNotebook,
+  onOpenFile,
+  onSave,
+  onOpenSaveAs,
+  onOpenWebLink,
+  onOpenHelp,
+  activeSlug,
+  activeTemplate,
+  onQuickSwitchBoard,
+  onExportPNG,
+  onExportSVG,
+  onExportPDF,
+  saveStatus,
+  linkedFileName,
+}) => {
+  const [fileMenuOpen, setFileMenuOpen] = useState(false);
+  const [editingSlotId, setEditingSlotId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [draftTitle, setDraftTitle] = useState(title);
+  const fileMenuRef = useRef<HTMLDivElement>(null);
+  const slotEditorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setDraftTitle(title);
+  }, [title]);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (fileMenuRef.current && !fileMenuRef.current.contains(e.target as Node)) {
+        setFileMenuOpen(false);
+      }
+      if (slotEditorRef.current && !slotEditorRef.current.contains(e.target as Node)) {
+        setEditingSlotId(null);
+      }
+    };
+    window.addEventListener('mousedown', handleClickOutside);
+    return () => window.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const isInkToolActive =
+    activeTool === 'pen' || activeTool === 'pencil' || activeTool === 'highlighter';
+
+  const commitTitle = () => {
+    setEditingTitle(false);
+    const trimmed = draftTitle.trim();
+    if (trimmed && trimmed !== title) {
+      onTitleChange(trimmed);
+    } else {
+      setDraftTitle(title);
+    }
+  };
+
+  const editingSlot = penSlots.find((s) => s.id === editingSlotId) || null;
+  const isGreenboard = activeTemplate === 'greenboard' || activeTemplate === 'greenboard_grid';
+  const isChalkboard = activeTemplate === 'chalkboard';
+
+  return (
+    <header className="relative z-40 h-14 px-3 flex items-center justify-between gap-2 bg-white/95 dark:bg-[#161920]/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 select-none shrink-0">
+      {/* Zone 1: Brand + File Menu + Document Title + Undo/Redo */}
+      <div className="flex items-center gap-1.5 min-w-0">
+        <div className="flex items-center gap-2 pr-2 border-r border-slate-200 dark:border-slate-800 shrink-0">
+          <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center shadow-xs">
+            <PenLine className="w-4 h-4" />
+          </div>
+          <span className="font-display font-bold text-sm tracking-tight text-slate-900 dark:text-slate-100 whitespace-nowrap hidden 2xl:inline">
+            InkBoard
+          </span>
+        </div>
+
+        {/* File Menu */}
+        <div className="relative" ref={fileMenuRef}>
+          <button
+            type="button"
+            onClick={() => setFileMenuOpen((v) => !v)}
+            className="h-9 px-2.5 rounded-lg flex items-center gap-1 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+          >
+            <span>Tệp</span>
+            <ChevronDown className="w-3.5 h-3.5 opacity-60" />
+          </button>
+
+          {fileMenuOpen && (
+            <div className="absolute left-0 top-11 w-68 rounded-xl bg-white dark:bg-[#1B1F27] border border-slate-200 dark:border-slate-700 shadow-xl py-1.5 z-50">
+              <button
+                type="button"
+                onClick={() => {
+                  setFileMenuOpen(false);
+                  onNewNotebook();
+                }}
+                className="w-full px-3.5 py-2 text-left text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-between cursor-pointer"
+              >
+                <span className="flex items-center gap-2.5">
+                  <FilePlus className="w-4 h-4 text-slate-500" />
+                  Bảng viết mới
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setFileMenuOpen(false);
+                  onOpenWebLink();
+                }}
+                className="w-full px-3.5 py-2 text-left text-xs font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 flex items-center justify-between cursor-pointer"
+              >
+                <span className="flex items-center gap-2.5">
+                  <Globe className="w-4 h-4" />
+                  Tạo Link Web chia sẻ (#board)
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setFileMenuOpen(false);
+                  onOpenFile();
+                }}
+                className="w-full px-3.5 py-2 text-left text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-between cursor-pointer"
+              >
+                <span className="flex items-center gap-2.5">
+                  <FolderOpen className="w-4 h-4 text-slate-500" />
+                  Mở tệp (.scrbleweb / .inkboard)...
+                </span>
+                <span className="text-[11px] font-mono-tabular text-slate-400">Ctrl+O</span>
+              </button>
+
+              <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
+
+              <button
+                type="button"
+                onClick={() => {
+                  setFileMenuOpen(false);
+                  onSave();
+                }}
+                className="w-full px-3.5 py-2 text-left text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-between cursor-pointer"
+              >
+                <span className="flex items-center gap-2.5">
+                  <Save className="w-4 h-4 text-blue-600" />
+                  {linkedFileName ? `Lưu (${linkedFileName})` : 'Lưu ngay'}
+                </span>
+                <span className="text-[11px] font-mono-tabular text-slate-400">Ctrl+S</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setFileMenuOpen(false);
+                  onOpenSaveAs();
+                }}
+                className="w-full px-3.5 py-2 text-left text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-between cursor-pointer"
+              >
+                <span className="flex items-center gap-2.5">
+                  <SaveAll className="w-4 h-4 text-slate-500" />
+                  Lưu thành... (Save As)
+                </span>
+                <span className="text-[11px] font-mono-tabular text-slate-400">Ctrl+Shift+S</span>
+              </button>
+
+              <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
+
+              <div className="px-3.5 py-1 text-[11px] font-medium text-slate-400">
+                Xuất định dạng khác
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setFileMenuOpen(false);
+                  onExportPNG(false);
+                }}
+                className="w-full px-3.5 py-2 text-left text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5 cursor-pointer"
+              >
+                <FileImage className="w-4 h-4 text-slate-500" />
+                Xuất ảnh PNG (2x sắc nét)
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setFileMenuOpen(false);
+                  onExportPNG(true);
+                }}
+                className="w-full px-3.5 py-2 text-left text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5 cursor-pointer"
+              >
+                <FileImage className="w-4 h-4 text-slate-500" />
+                Xuất PNG nền trong suốt
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setFileMenuOpen(false);
+                  onExportSVG();
+                }}
+                className="w-full px-3.5 py-2 text-left text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5 cursor-pointer"
+              >
+                <Download className="w-4 h-4 text-slate-500" />
+                Xuất Vector SVG
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setFileMenuOpen(false);
+                  onExportPDF();
+                }}
+                className="w-full px-3.5 py-2 text-left text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5 cursor-pointer"
+              >
+                <FileText className="w-4 h-4 text-rose-500" />
+                Xuất PDF toàn bộ trang
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Editable Title */}
+        <div className="hidden lg:flex items-center gap-1.5 min-w-0">
+          {editingTitle ? (
+            <input
+              autoFocus
+              value={draftTitle}
+              onChange={(e) => setDraftTitle(e.target.value)}
+              onBlur={commitTitle}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commitTitle();
+                if (e.key === 'Escape') {
+                  setDraftTitle(title);
+                  setEditingTitle(false);
+                }
+              }}
+              className="h-8 px-2 text-xs font-medium rounded-md border border-blue-500 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 outline-none w-36"
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() => setEditingTitle(true)}
+              title="Nhấn để đổi tên bảng viết"
+              className="h-8 px-2 rounded-md text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 truncate max-w-[130px] cursor-pointer"
+            >
+              {title}
+            </button>
+          )}
+          <span className="text-[11px] text-slate-400 whitespace-nowrap hidden xl:inline">
+            {saveStatus === 'saving' ? 'Đang lưu...' : 'Đã lưu'}
+          </span>
+        </div>
+
+        {/* Undo / Redo */}
+        <div className="flex items-center gap-0.5 pl-1 border-l border-slate-200 dark:border-slate-800 shrink-0">
+          <button
+            type="button"
+            disabled={!canUndo}
+            onClick={onUndo}
+            title="Hoàn tác (Ctrl+Z)"
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-30 disabled:pointer-events-none transition-colors cursor-pointer"
+          >
+            <Undo2 className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            disabled={!canRedo}
+            onClick={onRedo}
+            title="Làm lại (Ctrl+Y)"
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-30 disabled:pointer-events-none transition-colors cursor-pointer"
+          >
+            <Redo2 className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* Zone 2: Quick Pen Slots + Quick Board Switcher + Ruler */}
+      <div className="flex items-center gap-1.5 bg-slate-100/80 dark:bg-slate-800/70 p-1 rounded-xl border border-slate-200/80 dark:border-slate-700/80 relative" ref={slotEditorRef}>
+        {penSlots.map((slot) => {
+          const selected = isInkToolActive && activeSlotId === slot.id;
+          return (
+            <button
+              key={slot.id}
+              type="button"
+              onClick={() => {
+                if (selected) {
+                  setEditingSlotId((prev) => (prev === slot.id ? null : slot.id));
+                } else {
+                  onSelectPenSlot(slot);
+                  setEditingSlotId(null);
+                }
+              }}
+              title={`${slot.label} (${slot.width}px) — Nhấn lần nữa để tùy chỉnh`}
+              className={`relative h-8 w-8 rounded-lg flex items-center justify-center transition-all cursor-pointer shrink-0 ${
+                selected
+                  ? 'bg-white dark:bg-slate-900 shadow-xs ring-2 ring-blue-600'
+                  : 'hover:bg-white/60 dark:hover:bg-slate-700/60'
+              }`}
+            >
+              {slot.tool === 'highlighter' ? (
+                <span
+                  className="w-4 h-4 rounded-xs border border-black/15"
+                  style={{ backgroundColor: slot.color, opacity: 0.8 }}
+                />
+              ) : (
+                <span
+                  className="rounded-full border border-black/20 dark:border-white/25"
+                  style={{
+                    backgroundColor: slot.color,
+                    width: `${Math.min(18, Math.max(7, slot.width * 1.9))}px`,
+                    height: `${Math.min(18, Math.max(7, slot.width * 1.9))}px`,
+                  }}
+                />
+              )}
+              {slot.tool === 'pencil' && (
+                <span className="absolute -bottom-0.5 right-0.5 text-[8px] font-bold text-slate-500">
+                  P
+                </span>
+              )}
+            </button>
+          );
+        })}
+
+        <div className="w-px h-5 bg-slate-300 dark:bg-slate-700 mx-0.5" />
+
+        {/* Quick 1-click Board Surface Switcher: Whiteboard vs Realistic Greenboard vs Chalkboard */}
+        <div className="hidden md:flex items-center gap-0.5 bg-white/60 dark:bg-slate-900/60 p-0.5 rounded-lg border border-slate-200/70 dark:border-slate-700/70">
+          <button
+            type="button"
+            onClick={() => onQuickSwitchBoard('blank')}
+            title="Bảng trắng từ tính"
+            className={`h-7 px-2 rounded-md text-[11px] font-medium flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap ${
+              !isGreenboard && !isChalkboard
+                ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-xs'
+                : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
+            }`}
+          >
+            <span className="w-2.5 h-2.5 rounded-xs bg-white border border-slate-300" />
+            <span className="hidden xl:inline">Trắng</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => onQuickSwitchBoard('greenboard')}
+            title="Bảng xanh RAL 180 30 15 (#274C43) có lưới trắng nhạt"
+            className={`h-7 px-2 rounded-md text-[11px] font-medium flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap ${
+              isGreenboard
+                ? 'bg-[#274C43] text-white shadow-xs'
+                : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
+            }`}
+          >
+            <span className="w-2.5 h-2.5 rounded-xs bg-[#274C43] border border-white/25" />
+            <span className="hidden xl:inline">Bảng xanh</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => onQuickSwitchBoard('chalkboard')}
+            title="Bảng đen phấn"
+            className={`h-7 px-2 rounded-md text-[11px] font-medium flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap ${
+              isChalkboard
+                ? 'bg-slate-900 text-white shadow-xs'
+                : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
+            }`}
+          >
+            <span className="w-2.5 h-2.5 rounded-xs bg-[#1B2027] border border-white/25" />
+            <span className="hidden xl:inline">Đen</span>
+          </button>
+        </div>
+
+        {/* Ink-to-Shape Toggle */}
+        <button
+          type="button"
+          onClick={onToggleInkToShape}
+          title="Nhận diện hình tự động (Vẽ tay thành hình học)"
+          className={`h-8 px-2 rounded-lg flex items-center gap-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+            inkToShape
+              ? 'bg-blue-600 text-white shadow-xs'
+              : 'text-slate-600 dark:text-slate-300 hover:bg-white/70 dark:hover:bg-slate-700/70'
+          }`}
+        >
+          <Shapes className="w-3.5 h-3.5" />
+          <span className="hidden 2xl:inline">Tự nắn</span>
+        </button>
+
+        {/* Interactive Ruler Toggle */}
+        <button
+          type="button"
+          onClick={onToggleRuler}
+          title="Thước kẻ từ tính"
+          className={`h-8 px-2 rounded-lg flex items-center gap-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+            rulerVisible
+              ? 'bg-blue-600 text-white shadow-xs'
+              : 'text-slate-600 dark:text-slate-300 hover:bg-white/70 dark:hover:bg-slate-700/70'
+          }`}
+        >
+          <Ruler className="w-3.5 h-3.5" />
+          <span className="hidden 2xl:inline">Thước</span>
+        </button>
+
+        {/* Pen Slot Customizer Popover */}
+        {editingSlot && (
+          <div className="absolute top-12 left-0 w-72 rounded-xl bg-white dark:bg-[#1B1F27] border border-slate-200 dark:border-slate-700 shadow-xl p-3.5 z-50">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs font-semibold text-slate-900 dark:text-slate-100">
+                Tùy chỉnh: {editingSlot.label}
+              </span>
+              <span className="text-[11px] font-mono-tabular text-slate-500">
+                {editingSlot.width}px
+              </span>
+            </div>
+
+            <div className="grid grid-cols-3 gap-1 p-1 rounded-lg bg-slate-100 dark:bg-slate-800 mb-3">
+              {(
+                [
+                  { id: 'pen', label: 'Bút mực' },
+                  { id: 'pencil', label: 'Chì / Phấn' },
+                  { id: 'highlighter', label: 'Dạ quang' },
+                ] as const
+              ).map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() =>
+                    onUpdatePenSlot({
+                      ...editingSlot,
+                      tool: t.id,
+                      opacity: t.id === 'highlighter' ? 0.42 : t.id === 'pencil' ? 0.94 : 1,
+                      width:
+                        t.id === 'highlighter'
+                          ? Math.max(14, editingSlot.width)
+                          : Math.min(18, editingSlot.width),
+                    })
+                  }
+                  className={`py-1.5 text-[11px] font-medium rounded-md transition-colors cursor-pointer ${
+                    editingSlot.tool === t.id
+                      ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400'
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {SWATCHES.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => onUpdatePenSlot({ ...editingSlot, color: c })}
+                  className={`w-6 h-6 rounded-full border flex items-center justify-center cursor-pointer transition-transform hover:scale-110 ${
+                    editingSlot.color.toLowerCase() === c.toLowerCase()
+                      ? 'ring-2 ring-blue-600 ring-offset-1 dark:ring-offset-slate-900'
+                      : 'border-slate-300 dark:border-slate-600'
+                  }`}
+                  style={{ backgroundColor: c }}
+                >
+                  {editingSlot.color.toLowerCase() === c.toLowerCase() && (
+                    <Check
+                      className={`w-3 h-3 ${
+                        c === '#FFFFFF' || c === '#FACC15' || c === '#FDE047'
+                          ? 'text-slate-900'
+                          : 'text-white'
+                      }`}
+                    />
+                  )}
+                </button>
+              ))}
+              <label
+                title="Chọn màu tùy ý"
+                className="w-6 h-6 rounded-full border border-dashed border-slate-400 flex items-center justify-center text-[10px] font-bold text-slate-500 cursor-pointer overflow-hidden relative"
+              >
+                +
+                <input
+                  type="color"
+                  value={editingSlot.color}
+                  onChange={(e) =>
+                    onUpdatePenSlot({ ...editingSlot, color: e.target.value })
+                  }
+                  className="opacity-0 absolute inset-0 cursor-pointer"
+                />
+              </label>
+            </div>
+
+            <div className="space-y-1.5 mb-2.5">
+              <div className="flex justify-between text-[11px] text-slate-500">
+                <span>Độ dày nét</span>
+                <span className="font-mono-tabular">{editingSlot.width} px</span>
+              </div>
+              <input
+                type="range"
+                min={1}
+                max={editingSlot.tool === 'highlighter' ? 48 : 28}
+                step={0.5}
+                value={editingSlot.width}
+                onChange={(e) =>
+                  onUpdatePenSlot({ ...editingSlot, width: parseFloat(e.target.value) })
+                }
+                className="w-full accent-blue-600 cursor-pointer"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex justify-between text-[11px] text-slate-500">
+                <span>Độ mờ đục</span>
+                <span className="font-mono-tabular">
+                  {Math.round(editingSlot.opacity * 100)}%
+                </span>
+              </div>
+              <input
+                type="range"
+                min={0.15}
+                max={1}
+                step={0.05}
+                value={editingSlot.opacity}
+                onChange={(e) =>
+                  onUpdatePenSlot({ ...editingSlot, opacity: parseFloat(e.target.value) })
+                }
+                className="w-full accent-blue-600 cursor-pointer"
+              />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Zone 3: Palm Rejection, Library, Pages, Web Link, Theme, Fullscreen */}
+      <div className="flex items-center gap-1 shrink-0">
+        <button
+          type="button"
+          onClick={onToggleStylusOnly}
+          title={
+            stylusOnly
+              ? 'Chế độ Chỉ Bút đang BẬT (chặn cảm ứng tay để chống tì tay)'
+              : 'Chế độ Chỉ Bút đang TẮT'
+          }
+          className={`h-8 px-2 rounded-lg flex items-center gap-1 text-xs font-medium border transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+            stylusOnly
+              ? 'bg-amber-50 dark:bg-amber-950/50 border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-300'
+              : 'border-transparent text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+          }`}
+        >
+          <Smartphone className="w-3.5 h-3.5" />
+          <span className="hidden 2xl:inline">
+            {stylusOnly ? 'Chỉ bút' : 'Tay & Bút'}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={onOpenLibrary}
+          title="Sổ tay cục bộ"
+          className="h-8 px-2 rounded-lg flex items-center gap-1 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+        >
+          <BookOpen className="w-3.5 h-3.5" />
+          <span className="hidden xl:inline">Sổ tay</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={onTogglePagesDrawer}
+          title="Quản lý trang & Mẫu bảng"
+          className={`h-8 px-2 rounded-lg flex items-center gap-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+            pagesDrawerOpen
+              ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900'
+              : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+          }`}
+        >
+          <Layers className="w-3.5 h-3.5" />
+          <span className="font-mono-tabular">
+            {pageIndex + 1}/{pageCount}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={onOpenWebLink}
+          title="Tạo Link Web chia sẻ & Tên miền riêng (Không cần Server)"
+          className={`h-8 px-2.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+            activeSlug
+              ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+              : 'bg-blue-600 hover:bg-blue-700 text-white'
+          }`}
+        >
+          <Globe className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline font-mono-tabular max-w-[120px] truncate">
+            {activeSlug ? `#${activeSlug}` : 'Link Web'}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={onOpenSaveAs}
+          title="Lưu thành / Xuất PDF, PNG, SVG"
+          className="h-8 px-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium flex items-center gap-1 whitespace-nowrap shrink-0 cursor-pointer"
+        >
+          <Save className="w-3.5 h-3.5" />
+          <span className="hidden xl:inline">Xuất</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={onOpenHelp}
+          title="Hướng dẫn dùng Web, tải về & chạy tên miền riêng"
+          className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+        >
+          <HelpCircle className="w-4 h-4" />
+        </button>
+
+        <button
+          type="button"
+          onClick={onToggleDarkMode}
+          title={darkMode ? 'Giao diện sáng' : 'Giao diện tối'}
+          className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+        >
+          {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+        </button>
+
+        <button
+          type="button"
+          onClick={onToggleFullscreen}
+          title={isFullscreen ? 'Thoát toàn màn hình' : 'Toàn màn hình / Trình chiếu'}
+          className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer hidden sm:flex"
+        >
+          {isFullscreen ? (
+            <Minimize2 className="w-4 h-4" />
+          ) : (
+            <Maximize2 className="w-4 h-4" />
+          )}
+        </button>
+      </div>
+    </header>
+  );
+};
