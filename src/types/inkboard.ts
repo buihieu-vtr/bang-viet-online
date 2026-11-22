@@ -12,6 +12,7 @@ export type ToolType =
 
 export type SelectMode = 'lasso' | 'box';
 export type EraserMode = 'stroke' | 'partial';
+export type StrokeStyle = 'solid' | 'dashed' | 'dotted';
 
 export type ShapeType =
   | 'line'
@@ -55,6 +56,7 @@ export interface StrokeItem {
   color: string;
   width: number;
   opacity: number;
+  lineStyle?: StrokeStyle;
   zIndex?: number;
 }
 
@@ -72,6 +74,7 @@ export interface ShapeItem {
   fillOpacity: number;
   strokeWidth: number;
   dashed?: boolean;
+  lineStyle?: StrokeStyle;
   rows?: number;
   cols?: number;
 }
@@ -164,6 +167,7 @@ export interface PenSlot {
   color: string;
   width: number;
   opacity: number;
+  lineStyle?: StrokeStyle;
 }
 
 export interface RulerState {

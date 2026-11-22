@@ -383,6 +383,8 @@ export function recognizeInkShape(stroke: StrokeItem): ShapeItem | null {
         fillColor: 'transparent',
         fillOpacity: 0,
         strokeWidth: stroke.width,
+        lineStyle: stroke.lineStyle || 'solid',
+        dashed: stroke.lineStyle === 'dashed' || stroke.lineStyle === 'dotted',
       };
     }
   }
@@ -420,6 +422,8 @@ export function recognizeInkShape(stroke: StrokeItem): ShapeItem | null {
         fillColor: 'transparent',
         fillOpacity: 0,
         strokeWidth: stroke.width,
+        lineStyle: stroke.lineStyle || 'solid',
+        dashed: stroke.lineStyle === 'dashed' || stroke.lineStyle === 'dotted',
       };
     }
   }
@@ -450,6 +454,8 @@ export function recognizeInkShape(stroke: StrokeItem): ShapeItem | null {
       fillColor: 'transparent',
       fillOpacity: 0,
       strokeWidth: stroke.width,
+      lineStyle: stroke.lineStyle || 'solid',
+      dashed: stroke.lineStyle === 'dashed' || stroke.lineStyle === 'dotted',
     };
   }
 
@@ -469,6 +475,8 @@ export function recognizeInkShape(stroke: StrokeItem): ShapeItem | null {
       fillColor: 'transparent',
       fillOpacity: 0,
       strokeWidth: stroke.width,
+      lineStyle: stroke.lineStyle || 'solid',
+      dashed: stroke.lineStyle === 'dashed' || stroke.lineStyle === 'dotted',
     };
   }
 

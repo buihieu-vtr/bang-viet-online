@@ -28,8 +28,36 @@ import {
   Undo2,
   User as UserIcon,
 } from 'lucide-react';
-import { PaperTemplate, PenSlot, ToolType } from '../types/inkboard';
+import { PaperTemplate, PenSlot, StrokeStyle, ToolType } from '../types/inkboard';
 import { ColorPalettePicker } from './ColorPalettePicker';
+
+const StrokePreviewSvg: React.FC<{
+  style: StrokeStyle;
+  color: string;
+  strokeWidth?: number;
+  className?: string;
+}> = ({ style, color, strokeWidth = 2.5, className = 'w-5 h-3' }) => {
+  const dash =
+    style === 'dashed'
+      ? '5 3.5'
+      : style === 'dotted'
+        ? '0.1 4.5'
+        : undefined;
+  return (
+    <svg viewBox="0 0 26 10" className={className} aria-hidden="true">
+      <line
+        x1="2"
+        y1="5"
+        x2="24"
+        y2="5"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeDasharray={dash}
+      />
+    </svg>
+  );
+};
 
 interface TopBarProps {
   title: string;
@@ -189,6 +217,7 @@ export const TopBar: React.FC<TopBarProps> = ({
     <>
       {penSlots.map((slot) => {
         const selected = isInkToolActive && activeSlotId === slot.id;
+        const slotStyle: StrokeStyle = slot.lineStyle || 'solid';
         return (
           <button
             key={slot.id}
@@ -202,8 +231,8 @@ export const TopBar: React.FC<TopBarProps> = ({
                 setEditingSlotId(null);
               }
             }}
-            title={`${slot.label} (${slot.width}px) — Nhấn lần nữa để tùy chỉnh`}
-            className={`relative h-8 w-8 rounded-lg flex items-center justify-center transition-all cursor-pointer shrink-0 ${
+            title={`${slot.label} (${slot.width}px${slotStyle === 'dashed' ? ', nét đứt' : slotStyle === 'dotted' ? ', nét chấm' : ''}) — Nhấn lần nữa để tùy chỉnh`}
+            className={`relative h-8 w-7.5 xl:w-8 rounded-lg flex items-center justify-center transition-all cursor-pointer shrink-0 ${
               selected
                 ? 'bg-white dark:bg-slate-900 shadow-xs ring-2 ring-blue-600'
                 : 'hover:bg-white/60 dark:hover:bg-slate-700/60'
@@ -219,8 +248,8 @@ export const TopBar: React.FC<TopBarProps> = ({
                 className="rounded-full border border-black/20 dark:border-white/25"
                 style={{
                   backgroundColor: slot.color,
-                  width: `${Math.min(18, Math.max(7, slot.width * 1.9))}px`,
-                  height: `${Math.min(18, Math.max(7, slot.width * 1.9))}px`,
+                  width: `${Math.min(18, Math.max(6, slot.width * 1.85))}px`,
+                  height: `${Math.min(18, Math.max(6, slot.width * 1.85))}px`,
                 }}
               />
             )}
@@ -229,9 +258,52 @@ export const TopBar: React.FC<TopBarProps> = ({
                 P
               </span>
             )}
+            {slotStyle !== 'solid' && (
+              <span className="absolute bottom-0.5 left-1/2 -translate-x-1/2 flex items-center gap-0.5 pointer-events-none">
+                {slotStyle === 'dashed' ? (
+                  <>
+                    <span className="w-1.5 h-[2px] rounded-full bg-slate-600 dark:bg-slate-300" />
+                    <span className="w-1.5 h-[2px] rounded-full bg-slate-600 dark:bg-slate-300" />
+                  </>
+                ) : (
+                  <>
+                    <span className="w-[2px] h-[2px] rounded-full bg-slate-600 dark:bg-slate-300" />
+                    <span className="w-[2px] h-[2px] rounded-full bg-slate-600 dark:bg-slate-300" />
+                    <span className="w-[2px] h-[2px] rounded-full bg-slate-600 dark:bg-slate-300" />
+                  </>
+                )}
+              </span>
+            )}
           </button>
         );
       })}
+
+      {/* Quick Stroke Width & Line Style Trigger (Always visible!) */}
+      <button
+        type="button"
+        onClick={() => {
+          setQuickColorOpen(false);
+          setEditingSlotId((prev) =>
+            prev === currentActiveSlot.id ? null : currentActiveSlot.id
+          );
+        }}
+        title="Chế độ nét: chỉnh nét liền / nét đứt / nét chấm & độ dày to nhỏ tùy chỉnh"
+        className={`h-8 px-1.5 xl:px-2 rounded-lg flex items-center gap-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+          editingSlotId === currentActiveSlot.id
+            ? 'bg-white dark:bg-slate-900 text-blue-600 shadow-xs ring-2 ring-blue-600'
+            : 'text-slate-700 dark:text-slate-200 hover:bg-white/70 dark:hover:bg-slate-700/70'
+        }`}
+      >
+        <StrokePreviewSvg
+          style={currentActiveSlot.lineStyle || 'solid'}
+          color={currentActiveSlot.color}
+          strokeWidth={Math.min(4.2, Math.max(1.5, currentActiveSlot.width * 0.42))}
+          className="w-5 h-2.5 shrink-0"
+        />
+        <span className="font-mono-tabular text-[11px]">
+          {currentActiveSlot.width}px
+        </span>
+      </button>
 
       {/* Quick Custom Color Strip Trigger */}
       <button
@@ -241,7 +313,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           setQuickColorOpen((v) => !v);
         }}
         title="Dải màu tự chọn cho bút đang dùng"
-        className={`h-8 px-2 rounded-lg flex items-center gap-1.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+        className={`h-8 px-1.5 xl:px-2 rounded-lg flex items-center gap-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
           quickColorOpen
             ? 'bg-white dark:bg-slate-900 text-blue-600 shadow-xs ring-2 ring-blue-600'
             : 'text-slate-600 dark:text-slate-300 hover:bg-white/70 dark:hover:bg-slate-700/70'
@@ -866,16 +938,57 @@ export const TopBar: React.FC<TopBarProps> = ({
 
           {editingSlot && (
             <>
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center justify-between mb-2.5">
                 <span className="text-xs font-semibold text-slate-900 dark:text-slate-100">
-                  Tùy chỉnh: {editingSlot.label}
+                  Tùy chỉnh nét: {editingSlot.label}
                 </span>
                 <span className="text-[11px] font-mono-tabular text-slate-500">
-                  {editingSlot.width}px
+                  {editingSlot.width}px ·{' '}
+                  {(editingSlot.lineStyle || 'solid') === 'dashed'
+                    ? 'Nét đứt'
+                    : (editingSlot.lineStyle || 'solid') === 'dotted'
+                      ? 'Nét chấm'
+                      : 'Nét liền'}
                 </span>
               </div>
 
-              <div className="grid grid-cols-3 gap-1 p-1 rounded-lg bg-slate-100 dark:bg-slate-800 mb-3">
+              {/* Live Stroke Preview */}
+              <div
+                className={`h-11 rounded-lg border border-slate-200 dark:border-slate-700 mb-3 flex items-center justify-center px-3 ${
+                  isGreenboard
+                    ? 'bg-[#274C43]'
+                    : isChalkboard
+                      ? 'bg-[#1B2027]'
+                      : 'bg-slate-50 dark:bg-slate-900'
+                }`}
+              >
+                <svg viewBox="0 0 240 36" className="w-full h-8 overflow-visible">
+                  <path
+                    d="M 10 22 Q 65 6 120 18 T 230 15"
+                    fill="none"
+                    stroke={editingSlot.color}
+                    strokeOpacity={editingSlot.opacity}
+                    strokeWidth={Math.min(22, Math.max(0.8, editingSlot.width))}
+                    strokeLinecap={
+                      (editingSlot.lineStyle || 'solid') === 'dotted'
+                        ? 'round'
+                        : editingSlot.tool === 'highlighter'
+                          ? 'butt'
+                          : 'round'
+                    }
+                    strokeDasharray={
+                      (editingSlot.lineStyle || 'solid') === 'dashed'
+                        ? `${Math.max(8, editingSlot.width * 3.1)} ${Math.max(6, editingSlot.width * 2.1)}`
+                        : (editingSlot.lineStyle || 'solid') === 'dotted'
+                          ? `0.1 ${Math.max(5.5, editingSlot.width * 2.2)}`
+                          : undefined
+                    }
+                  />
+                </svg>
+              </div>
+
+              {/* Pen Type */}
+              <div className="grid grid-cols-3 gap-1 p-1 rounded-lg bg-slate-100 dark:bg-slate-800 mb-2.5">
                 {(
                   [
                     { id: 'pen', label: 'Bút mực' },
@@ -908,24 +1021,122 @@ export const TopBar: React.FC<TopBarProps> = ({
                 ))}
               </div>
 
+              {/* Line Style Selector (Solid / Dashed / Dotted) */}
               <div className="mb-3">
-                <ColorPalettePicker
-                  color={editingSlot.color}
-                  onChange={(hex) => onUpdatePenSlot({ ...editingSlot, color: hex })}
-                  customColors={customColors}
-                  onAddCustomColor={onAddCustomColor}
-                  onRemoveCustomColor={onRemoveCustomColor}
-                />
+                <div className="text-[11px] text-slate-500 mb-1.5">Kiểu nét vẽ</div>
+                <div className="grid grid-cols-3 gap-1 p-1 rounded-lg bg-slate-100 dark:bg-slate-800">
+                  {(
+                    [
+                      { id: 'solid', label: 'Nét liền' },
+                      { id: 'dashed', label: 'Nét đứt' },
+                      { id: 'dotted', label: 'Nét chấm' },
+                    ] as const
+                  ).map((st) => {
+                    const active = (editingSlot.lineStyle || 'solid') === st.id;
+                    return (
+                      <button
+                        key={st.id}
+                        type="button"
+                        onClick={() =>
+                          onUpdatePenSlot({ ...editingSlot, lineStyle: st.id })
+                        }
+                        className={`py-1.5 px-1.5 rounded-md flex flex-col items-center gap-1 text-[11px] font-medium transition-colors cursor-pointer ${
+                          active
+                            ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-xs'
+                            : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                        }`}
+                      >
+                        <StrokePreviewSvg
+                          style={st.id}
+                          color={active ? '#2563EB' : 'currentColor'}
+                          strokeWidth={2.4}
+                          className="w-7 h-2.5"
+                        />
+                        <span>{st.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
-              <div className="space-y-1.5 mb-2.5">
-                <div className="flex justify-between text-[11px] text-slate-500">
-                  <span>Độ dày nét</span>
-                  <span className="font-mono-tabular">{editingSlot.width} px</span>
+              {/* Quick Size Presets + Fine Thickness Slider */}
+              <div className="space-y-2 mb-3">
+                <div className="flex items-center justify-between text-[11px] text-slate-500">
+                  <span>Độ dày nét (To / Nhỏ)</span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onUpdatePenSlot({
+                          ...editingSlot,
+                          width: Math.max(0.5, Number((editingSlot.width - 0.5).toFixed(1))),
+                        })
+                      }
+                      className="w-5 h-5 rounded bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold flex items-center justify-center cursor-pointer"
+                      title="Giảm 0.5px"
+                    >
+                      -
+                    </button>
+                    <span className="font-mono-tabular font-semibold text-slate-800 dark:text-slate-100 min-w-[40px] text-center">
+                      {editingSlot.width} px
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onUpdatePenSlot({
+                          ...editingSlot,
+                          width: Math.min(
+                            editingSlot.tool === 'highlighter' ? 48 : 28,
+                            Number((editingSlot.width + 0.5).toFixed(1))
+                          ),
+                        })
+                      }
+                      className="w-5 h-5 rounded bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold flex items-center justify-center cursor-pointer"
+                      title="Tăng 0.5px"
+                    >
+                      +
+                    </button>
+                  </div>
                 </div>
+
+                {/* 5 Quick Presets */}
+                <div className="grid grid-cols-5 gap-1">
+                  {(editingSlot.tool === 'highlighter'
+                    ? [10, 16, 22, 30, 40]
+                    : [1.5, 3, 5, 8, 14]
+                  ).map((preset) => {
+                    const isPresetActive = Math.abs(editingSlot.width - preset) < 0.25;
+                    return (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() =>
+                          onUpdatePenSlot({ ...editingSlot, width: preset })
+                        }
+                        className={`h-8 rounded-lg border flex flex-col items-center justify-center gap-0.5 transition-colors cursor-pointer ${
+                          isPresetActive
+                            ? 'border-blue-600 bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400'
+                            : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
+                        }`}
+                      >
+                        <span
+                          className="rounded-full bg-current"
+                          style={{
+                            width: `${Math.min(13, Math.max(3, preset * (editingSlot.tool === 'highlighter' ? 0.28 : 0.85)))}px`,
+                            height: `${Math.min(13, Math.max(3, preset * (editingSlot.tool === 'highlighter' ? 0.28 : 0.85)))}px`,
+                          }}
+                        />
+                        <span className="text-[9px] font-mono-tabular leading-none">
+                          {preset}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
                 <input
                   type="range"
-                  min={1}
+                  min={0.5}
                   max={editingSlot.tool === 'highlighter' ? 48 : 28}
                   step={0.5}
                   value={editingSlot.width}
@@ -933,6 +1144,16 @@ export const TopBar: React.FC<TopBarProps> = ({
                     onUpdatePenSlot({ ...editingSlot, width: parseFloat(e.target.value) })
                   }
                   className="w-full accent-blue-600 cursor-pointer"
+                />
+              </div>
+
+              <div className="mb-3">
+                <ColorPalettePicker
+                  color={editingSlot.color}
+                  onChange={(hex) => onUpdatePenSlot({ ...editingSlot, color: hex })}
+                  customColors={customColors}
+                  onAddCustomColor={onAddCustomColor}
+                  onRemoveCustomColor={onRemoveCustomColor}
                 />
               </div>
 

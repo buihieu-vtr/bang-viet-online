@@ -7,6 +7,7 @@ import {
   ShapeItem,
   StickyItem,
   StrokeItem,
+  StrokeStyle,
   TextItem,
   ViewportState,
 } from '../types/inkboard';
@@ -365,16 +366,41 @@ export function drawTemplatePattern(
   ctx.restore();
 }
 
+function applyStrokeLineDash(
+  ctx: CanvasRenderingContext2D,
+  style: StrokeStyle,
+  width: number
+) {
+  if (style === 'dashed') {
+    const dashLen = Math.max(8, width * 3.1);
+    const gapLen = Math.max(6, width * 2.1);
+    ctx.setLineDash([dashLen, gapLen]);
+  } else if (style === 'dotted') {
+    ctx.lineCap = 'round';
+    const gapLen = Math.max(5.5, width * 2.2);
+    ctx.setLineDash([0.1, gapLen]);
+  } else {
+    ctx.setLineDash([]);
+  }
+}
+
 export function renderStroke(ctx: CanvasRenderingContext2D, stroke: StrokeItem) {
   const pts = stroke.points;
   if (pts.length === 0) return;
+
+  const lineStyle: StrokeStyle = stroke.lineStyle || 'solid';
 
   ctx.save();
   ctx.globalAlpha = stroke.opacity;
   ctx.strokeStyle = stroke.color;
   ctx.fillStyle = stroke.color;
   ctx.lineJoin = 'round';
-  ctx.lineCap = stroke.tool === 'highlighter' ? 'butt' : 'round';
+  ctx.lineCap =
+    lineStyle === 'dotted'
+      ? 'round'
+      : stroke.tool === 'highlighter'
+        ? 'butt'
+        : 'round';
 
   if (pts.length === 1) {
     const r = Math.max(1, (stroke.width * (0.65 + (pts[0].pressure || 0.5) * 0.7)) / 2);
@@ -385,8 +411,15 @@ export function renderStroke(ctx: CanvasRenderingContext2D, stroke: StrokeItem) 
     return;
   }
 
-  if (stroke.tool === 'highlighter') {
-    ctx.lineWidth = stroke.width;
+  // Highlighter or dashed/dotted strokes must be stroked as ONE continuous path so dashes remain even
+  if (stroke.tool === 'highlighter' || lineStyle !== 'solid') {
+    if (stroke.tool === 'pencil') {
+      ctx.globalAlpha = stroke.opacity * 0.85;
+      ctx.shadowColor = stroke.color;
+      ctx.shadowBlur = 0.8;
+    }
+    ctx.lineWidth = Math.max(0.8, stroke.width);
+    applyStrokeLineDash(ctx, lineStyle, stroke.width);
     ctx.beginPath();
     ctx.moveTo(pts[0].x, pts[0].y);
     for (let i = 1; i < pts.length - 1; i++) {
@@ -478,8 +511,9 @@ export function renderShape(ctx: CanvasRenderingContext2D, shape: ShapeItem) {
   ctx.lineWidth = shape.strokeWidth;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  if (shape.dashed) {
-    ctx.setLineDash([shape.strokeWidth * 2.5, shape.strokeWidth * 2]);
+  const shapeStyle: StrokeStyle = shape.lineStyle ?? (shape.dashed ? 'dashed' : 'solid');
+  if (shapeStyle !== 'solid') {
+    applyStrokeLineDash(ctx, shapeStyle, shape.strokeWidth);
   }
 
   const hasFill = shape.fillColor && shape.fillColor !== 'transparent' && shape.fillOpacity > 0;

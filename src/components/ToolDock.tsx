@@ -35,6 +35,7 @@ import {
   SelectMode,
   ShapeType,
   STICKY_COLORS,
+  StrokeStyle,
   ToolType,
 } from '../types/inkboard';
 import { ColorPalettePicker } from './ColorPalettePicker';
@@ -55,8 +56,10 @@ interface ToolDockProps {
   onShapeStrokeColorChange: (c: string) => void;
   shapeFillColor: string;
   onShapeFillColorChange: (c: string) => void;
-  shapeDashed: boolean;
-  onShapeDashedChange: (d: boolean) => void;
+  shapeLineStyle: StrokeStyle;
+  onShapeLineStyleChange: (s: StrokeStyle) => void;
+  shapeStrokeWidth: number;
+  onShapeStrokeWidthChange: (w: number) => void;
   onTriggerImageUpload: () => void;
   onInsertSticky: (bg: string, text: string) => void;
   onInsertMath: () => void;
@@ -104,8 +107,10 @@ export const ToolDock: React.FC<ToolDockProps> = ({
   onShapeStrokeColorChange,
   shapeFillColor,
   onShapeFillColorChange,
-  shapeDashed,
-  onShapeDashedChange,
+  shapeLineStyle,
+  onShapeLineStyleChange,
+  shapeStrokeWidth,
+  onShapeStrokeWidthChange,
   onTriggerImageUpload,
   onInsertSticky,
   onInsertMath,
@@ -454,15 +459,85 @@ export const ToolDock: React.FC<ToolDockProps> = ({
               )}
             </div>
 
-            <label className="flex items-center justify-between text-xs text-slate-700 dark:text-slate-200 cursor-pointer pt-1">
-              <span>Nét đứt (Dashed)</span>
-              <input
-                type="checkbox"
-                checked={shapeDashed}
-                onChange={(e) => onShapeDashedChange(e.target.checked)}
-                className="accent-blue-600 w-4 h-4 cursor-pointer"
-              />
-            </label>
+            {/* Shape Line Style & Border Thickness */}
+            <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-2.5">
+              <div className="space-y-1">
+                <div className="text-[11px] font-medium text-slate-500">
+                  Kiểu nét viền
+                </div>
+                <div className="grid grid-cols-3 gap-1 p-1 rounded-lg bg-slate-100 dark:bg-slate-800">
+                  {(
+                    [
+                      { id: 'solid', label: 'Nét liền', dash: undefined },
+                      { id: 'dashed', label: 'Nét đứt', dash: '5 3.5' },
+                      { id: 'dotted', label: 'Nét chấm', dash: '0.1 4.5' },
+                    ] as const
+                  ).map((st) => {
+                    const active = shapeLineStyle === st.id;
+                    return (
+                      <button
+                        key={st.id}
+                        type="button"
+                        onClick={() => onShapeLineStyleChange(st.id)}
+                        className={`py-1.5 px-1 rounded-md flex flex-col items-center gap-1 text-[11px] font-medium transition-colors cursor-pointer ${
+                          active
+                            ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-xs'
+                            : 'text-slate-600 dark:text-slate-400'
+                        }`}
+                      >
+                        <svg viewBox="0 0 26 10" className="w-7 h-2.5" aria-hidden="true">
+                          <line
+                            x1="2"
+                            y1="5"
+                            x2="24"
+                            y2="5"
+                            stroke={active ? '#2563EB' : 'currentColor'}
+                            strokeWidth={2.4}
+                            strokeLinecap="round"
+                            strokeDasharray={st.dash}
+                          />
+                        </svg>
+                        <span>{st.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex justify-between text-[11px] text-slate-500">
+                  <span>Độ dày viền</span>
+                  <span className="font-mono-tabular font-semibold text-slate-800 dark:text-slate-100">
+                    {shapeStrokeWidth} px
+                  </span>
+                </div>
+                <div className="grid grid-cols-5 gap-1">
+                  {[1.5, 3, 5, 8, 12].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => onShapeStrokeWidthChange(preset)}
+                      className={`h-7 rounded-md border text-[10px] font-mono-tabular font-medium cursor-pointer transition-colors ${
+                        Math.abs(shapeStrokeWidth - preset) < 0.25
+                          ? 'border-blue-600 bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400'
+                          : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
+                      }`}
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                </div>
+                <input
+                  type="range"
+                  min={1}
+                  max={20}
+                  step={0.5}
+                  value={shapeStrokeWidth}
+                  onChange={(e) => onShapeStrokeWidthChange(parseFloat(e.target.value))}
+                  className="w-full accent-blue-600 cursor-pointer"
+                />
+              </div>
+            </div>
           </div>
         )}
 

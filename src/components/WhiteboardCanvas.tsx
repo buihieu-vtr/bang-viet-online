@@ -21,6 +21,7 @@ import {
   ShapeType,
   StickyItem,
   StrokeItem,
+  StrokeStyle,
   TextItem,
   ToolType,
   ViewportState,
@@ -67,7 +68,8 @@ interface WhiteboardCanvasProps {
   activeShape: ShapeType;
   shapeStrokeColor: string;
   shapeFillColor: string;
-  shapeDashed: boolean;
+  shapeLineStyle: StrokeStyle;
+  shapeStrokeWidth: number;
   inkToShape: boolean;
   stylusOnly: boolean;
   darkMode: boolean;
@@ -167,7 +169,8 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
   activeShape,
   shapeStrokeColor,
   shapeFillColor,
-  shapeDashed,
+  shapeLineStyle,
+  shapeStrokeWidth,
   inkToShape,
   stylusOnly,
   darkMode,
@@ -836,6 +839,7 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
         color: activePenSlot.color,
         width: activePenSlot.width,
         opacity: activePenSlot.opacity,
+        lineStyle: activePenSlot.lineStyle || 'solid',
         points: [{ x: localX, y: localY, pressure, t: Date.now() }],
       };
       interactionRef.current = {
@@ -900,8 +904,9 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
         strokeColor: shapeStrokeColor,
         fillColor: shapeFillColor,
         fillOpacity: shapeFillColor === 'transparent' ? 0 : 0.25,
-        strokeWidth: 3,
-        dashed: shapeDashed,
+        strokeWidth: shapeStrokeWidth,
+        lineStyle: shapeLineStyle,
+        dashed: shapeLineStyle !== 'solid',
         rows: 3,
         cols: 3,
       };

@@ -30,6 +30,7 @@ import {
   ShapeItem,
   ShapeType,
   StickyItem,
+  StrokeStyle,
   TextItem,
   ToolType,
   ViewportState,
@@ -100,7 +101,8 @@ export default function App() {
   const [activeShape, setActiveShape] = useState<ShapeType>('rect');
   const [shapeStrokeColor, setShapeStrokeColor] = useState<string>('#2563EB');
   const [shapeFillColor, setShapeFillColor] = useState<string>('transparent');
-  const [shapeDashed, setShapeDashed] = useState<boolean>(false);
+  const [shapeLineStyle, setShapeLineStyle] = useState<StrokeStyle>('solid');
+  const [shapeStrokeWidth, setShapeStrokeWidth] = useState<number>(3);
   const [inkToShape, setInkToShape] = useState<boolean>(false);
   const [stylusOnly, setStylusOnly] = useState<boolean>(false);
   const [darkMode, setDarkMode] = useState<boolean>(false);
@@ -1109,8 +1111,10 @@ export default function App() {
             onShapeStrokeColorChange={setShapeStrokeColor}
             shapeFillColor={shapeFillColor}
             onShapeFillColorChange={setShapeFillColor}
-            shapeDashed={shapeDashed}
-            onShapeDashedChange={setShapeDashed}
+            shapeLineStyle={shapeLineStyle}
+            onShapeLineStyleChange={setShapeLineStyle}
+            shapeStrokeWidth={shapeStrokeWidth}
+            onShapeStrokeWidthChange={setShapeStrokeWidth}
             onTriggerImageUpload={() => imageInputRef.current?.click()}
             onInsertSticky={handleInsertSticky}
             onInsertMath={() => setMathModalOpen(true)}
@@ -1143,7 +1147,8 @@ export default function App() {
             activeShape={activeShape}
             shapeStrokeColor={shapeStrokeColor}
             shapeFillColor={shapeFillColor}
-            shapeDashed={shapeDashed}
+            shapeLineStyle={shapeLineStyle}
+            shapeStrokeWidth={shapeStrokeWidth}
             inkToShape={inkToShape}
             stylusOnly={stylusOnly}
             darkMode={darkMode}

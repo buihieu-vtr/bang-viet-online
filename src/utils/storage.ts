@@ -390,14 +390,25 @@ export function exportPageToSVG(page: BoardPage, filename: string) {
     `<rect x="${bounds.x}" y="${bounds.y}" width="${bounds.width}" height="${bounds.height}" fill="${tpl.bg}" />`
   );
 
+  const getDashAttr = (style: 'solid' | 'dashed' | 'dotted', width: number) => {
+    if (style === 'dashed') {
+      return `stroke-dasharray="${Math.max(8, width * 3.1)} ${Math.max(6, width * 2.1)}"`;
+    }
+    if (style === 'dotted') {
+      return `stroke-dasharray="0.1 ${Math.max(5.5, width * 2.2)}"`;
+    }
+    return '';
+  };
+
   for (const el of page.elements) {
     if (el.type === 'stroke') {
       if (el.points.length === 0) continue;
       const d = el.points
         .map((p, idx) => `${idx === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`)
         .join(' ');
+      const dashAttr = getDashAttr(el.lineStyle || 'solid', el.width);
       parts.push(
-        `<path d="${d}" fill="none" stroke="${el.color}" stroke-width="${el.width}" stroke-opacity="${el.opacity}" stroke-linecap="round" stroke-linejoin="round" />`
+        `<path d="${d}" fill="none" stroke="${el.color}" stroke-width="${el.width}" stroke-opacity="${el.opacity}" stroke-linecap="round" stroke-linejoin="round" ${dashAttr} />`
       );
     } else if (el.type === 'shape') {
       const x = el.width >= 0 ? el.x : el.x + el.width;
@@ -408,9 +419,8 @@ export function exportPageToSVG(page: BoardPage, filename: string) {
         el.fillColor && el.fillColor !== 'transparent' && el.fillOpacity > 0
           ? `fill="${el.fillColor}" fill-opacity="${el.fillOpacity}"`
           : 'fill="none"';
-      const dashAttr = el.dashed
-        ? `stroke-dasharray="${el.strokeWidth * 2.5} ${el.strokeWidth * 2}"`
-        : '';
+      const shapeStyle = el.lineStyle ?? (el.dashed ? 'dashed' : 'solid');
+      const dashAttr = getDashAttr(shapeStyle, el.strokeWidth);
       const rotAttr = el.rotation
         ? `transform="rotate(${el.rotation} ${x + w / 2} ${y + h / 2})"`
         : '';
