@@ -1,0 +1,6 @@
+{
+  "name": "InkBoard Studio",
+  "description": "Ứng dụng bảng viết kỹ thuật số đầy đủ tính năng như Scrble Ink: bút viết mượt nhạy lực, thước kẻ xoay từ tính, nhận diện hình học, chèn ảnh/ghi chú/toán học, đa trang và lưu trữ Save / Save As / Export PDF.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

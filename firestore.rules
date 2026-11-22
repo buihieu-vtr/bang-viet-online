@@ -1,0 +1,196 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Hardened Global Primitives ---
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isOwner(userId) {
+      return isVerified() && request.auth.uid == userId;
+    }
+
+    // --- Entity Validation Blueprints ---
+    function isValidUserPublicProfile(data, userId) {
+      return data.keys().hasAll(['uid', 'displayName', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'displayName', 'photoURL', 'createdAt', 'updatedAt'])
+        && isValidId(data.uid)
+        && data.uid == userId
+        && data.displayName is string
+        && data.displayName.size() >= 1
+        && data.displayName.size() <= 80
+        && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 500))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidUserPrivateInfo(data, userId) {
+      return data.keys().hasAll(['uid', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'customColors', 'updatedAt'])
+        && isValidId(data.uid)
+        && data.uid == userId
+        && (!('email' in data) || (data.email is string && data.email.size() <= 254))
+        && (!('customColors' in data) || (
+          data.customColors is list
+          && data.customColors.size() <= 24
+          && (data.customColors.size() == 0 || (data.customColors[0] is string && data.customColors[0].size() <= 16))
+        ))
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidNotebookMeta(data, userId, notebookId) {
+      return data.keys().hasAll(['id', 'ownerId', 'title', 'activePageId', 'pageCount', 'version', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'ownerId', 'title', 'slug', 'activePageId', 'pageCount', 'version', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && data.id == notebookId
+        && isValidId(data.ownerId)
+        && data.ownerId == userId
+        && data.title is string
+        && data.title.size() >= 1
+        && data.title.size() <= 120
+        && (!('slug' in data) || (data.slug is string && data.slug.size() <= 80))
+        && isValidId(data.activePageId)
+        && data.pageCount is int
+        && data.pageCount >= 1
+        && data.pageCount <= 200
+        && data.version is int
+        && data.version >= 1
+        && data.version <= 10
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidNotebookPage(data, userId, notebookId, pageId) {
+      return data.keys().hasAll(['id', 'ownerId', 'notebookId', 'order', 'title', 'template', 'pageSize', 'gridSize', 'elements', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'ownerId', 'notebookId', 'order', 'title', 'template', 'pageSize', 'gridSize', 'elements', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && data.id == pageId
+        && isValidId(data.ownerId)
+        && data.ownerId == userId
+        && isValidId(data.notebookId)
+        && data.notebookId == notebookId
+        && data.order is int
+        && data.order >= 0
+        && data.order <= 200
+        && data.title is string
+        && data.title.size() >= 1
+        && data.title.size() <= 80
+        && data.template in ['blank', 'ivory', 'greenboard', 'greenboard_grid', 'chalkboard', 'ruled', 'grid', 'dots', 'music']
+        && data.pageSize in ['infinite', 'slide16x9', 'a4Portrait', 'a4Landscape']
+        && data.gridSize is int
+        && data.gridSize >= 8
+        && data.gridSize <= 128
+        && data.elements is list
+        && data.elements.size() <= 2500
+        && (data.elements.size() == 0 || data.elements[0] is map)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // --- Collection Rules ---
+    match /users/{userId}/public/{docId} {
+      allow get: if isValidId(userId) && isValidId(docId) && docId == 'profile' && isOwner(userId);
+      allow list: if false;
+      allow create: if isValidId(userId) && isValidId(docId) && docId == 'profile'
+        && isOwner(userId)
+        && isValidUserPublicProfile(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(userId) && isValidId(docId) && docId == 'profile'
+        && isOwner(userId)
+        && isValidUserPublicProfile(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'updatedAt']);
+      allow delete: if isValidId(userId) && isValidId(docId) && docId == 'profile' && isOwner(userId);
+    }
+
+    match /users/{userId}/private/{docId} {
+      allow get: if isValidId(userId) && isValidId(docId) && docId == 'info' && isOwner(userId);
+      allow list: if false;
+      allow create: if isValidId(userId) && isValidId(docId) && docId == 'info'
+        && isOwner(userId)
+        && isValidUserPrivateInfo(incoming(), userId)
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(userId) && isValidId(docId) && docId == 'info'
+        && isOwner(userId)
+        && isValidUserPrivateInfo(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['email', 'customColors', 'updatedAt']);
+      allow delete: if isValidId(userId) && isValidId(docId) && docId == 'info' && isOwner(userId);
+    }
+
+    match /users/{userId}/notebooks/{notebookId} {
+      allow get: if isValidId(userId) && isValidId(notebookId) && isOwner(userId);
+      allow list: if isValidId(userId) && isOwner(userId) && existing().ownerId == request.auth.uid;
+      allow create: if isValidId(userId) && isValidId(notebookId)
+        && isOwner(userId)
+        && isValidNotebookMeta(incoming(), userId, notebookId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(userId) && isValidId(notebookId)
+        && isOwner(userId)
+        && isValidNotebookMeta(incoming(), userId, notebookId)
+        && incoming().id == existing().id
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'slug', 'activePageId', 'pageCount', 'version', 'updatedAt']);
+      allow delete: if isValidId(userId) && isValidId(notebookId) && isOwner(userId);
+
+      match /pages/{pageId} {
+        allow get: if isValidId(userId) && isValidId(notebookId) && isValidId(pageId)
+          && isOwner(userId)
+          && get(/databases/$(database)/documents/users/$(userId)/notebooks/$(notebookId)).data.ownerId == request.auth.uid;
+        allow list: if isValidId(userId) && isValidId(notebookId)
+          && isOwner(userId)
+          && existing().ownerId == request.auth.uid
+          && existing().notebookId == notebookId;
+        allow create: if isValidId(userId) && isValidId(notebookId) && isValidId(pageId)
+          && isOwner(userId)
+          && isValidNotebookPage(incoming(), userId, notebookId, pageId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && (
+            exists(/databases/$(database)/documents/users/$(userId)/notebooks/$(notebookId))
+            || existsAfter(/databases/$(database)/documents/users/$(userId)/notebooks/$(notebookId))
+          );
+        allow update: if isValidId(userId) && isValidId(notebookId) && isValidId(pageId)
+          && isOwner(userId)
+          && isValidNotebookPage(incoming(), userId, notebookId, pageId)
+          && incoming().id == existing().id
+          && incoming().ownerId == existing().ownerId
+          && incoming().notebookId == existing().notebookId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['order', 'title', 'template', 'pageSize', 'gridSize', 'elements', 'updatedAt'])
+          && get(/databases/$(database)/documents/users/$(userId)/notebooks/$(notebookId)).data.ownerId == request.auth.uid;
+        allow delete: if isValidId(userId) && isValidId(notebookId) && isValidId(pageId) && isOwner(userId);
+      }
+    }
+  }
+}
