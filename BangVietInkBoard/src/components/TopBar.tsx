@@ -174,14 +174,14 @@ export const TopBar: React.FC<TopBarProps> = ({
   const isChalkboard = activeTemplate === 'chalkboard';
 
   return (
-    <header className="relative z-40 h-14 px-3 flex items-center justify-between gap-2 bg-white/95 dark:bg-[#161920]/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 select-none shrink-0">
-      {/* Zone 1: Brand + File Menu + Document Title + Undo/Redo */}
-      <div className="flex items-center gap-1.5 min-w-0">
-        <div className="flex items-center gap-2 pr-2 border-r border-slate-200 dark:border-slate-800 shrink-0">
-          <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center shadow-xs">
+    <header className="relative z-40 h-14 px-2.5 flex items-center justify-between gap-2 bg-white/95 dark:bg-[#161920]/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 select-none shrink-0">
+      {/* Zone 1: Brand + Mục lục + File Menu + Document Title + Undo/Redo */}
+      <div className="flex items-center gap-1 shrink-0">
+        <div className="flex items-center gap-1.5 pr-1.5 border-r border-slate-200 dark:border-slate-800 shrink-0">
+          <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center shadow-xs shrink-0">
             <PenLine className="w-4 h-4" />
           </div>
-          <span className="font-display font-bold text-sm tracking-tight text-slate-900 dark:text-slate-100 whitespace-nowrap hidden 2xl:inline">
+          <span className="font-display font-bold text-sm tracking-tight text-slate-900 dark:text-slate-100 whitespace-nowrap hidden min-[1720px]:inline">
             InkBoard
           </span>
         </div>
@@ -191,22 +191,22 @@ export const TopBar: React.FC<TopBarProps> = ({
           type="button"
           onClick={onToggleToc}
           title="Mục lục trang A4 (xem trước & lướt nhanh)"
-          className={`h-9 px-2.5 rounded-lg flex items-center gap-1.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+          className={`h-8 px-2 rounded-lg flex items-center gap-1.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
             tocOpen
               ? 'bg-blue-600 text-white shadow-xs'
               : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
           }`}
         >
           <PanelLeft className="w-4 h-4" />
-          <span className="hidden md:inline">Mục lục</span>
+          <span className="hidden xl:inline">Mục lục</span>
         </button>
 
         {/* File Menu */}
-        <div className="relative" ref={fileMenuRef}>
+        <div className="relative shrink-0" ref={fileMenuRef}>
           <button
             type="button"
             onClick={() => setFileMenuOpen((v) => !v)}
-            className="h-9 px-2.5 rounded-lg flex items-center gap-1 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            className="h-8 px-2 rounded-lg flex items-center gap-1 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
           >
             <span>Tệp</span>
             <ChevronDown className="w-3.5 h-3.5 opacity-60" />
@@ -347,7 +347,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         </div>
 
         {/* Editable Title */}
-        <div className="hidden lg:flex items-center gap-1.5 min-w-0">
+        <div className="hidden 2xl:flex items-center gap-1.5 shrink-0">
           {editingTitle ? (
             <input
               autoFocus
@@ -361,19 +361,19 @@ export const TopBar: React.FC<TopBarProps> = ({
                   setEditingTitle(false);
                 }
               }}
-              className="h-8 px-2 text-xs font-medium rounded-md border border-blue-500 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 outline-none w-36"
+              className="h-8 px-2 text-xs font-medium rounded-md border border-blue-500 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 outline-none w-32"
             />
           ) : (
             <button
               type="button"
               onClick={() => setEditingTitle(true)}
               title="Nhấn để đổi tên bảng viết"
-              className="h-8 px-2 rounded-md text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 truncate max-w-[130px] cursor-pointer"
+              className="h-8 px-2 rounded-md text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 truncate max-w-[120px] cursor-pointer"
             >
               {title}
             </button>
           )}
-          <span className="text-[11px] text-slate-400 whitespace-nowrap hidden xl:inline">
+          <span className="text-[11px] text-slate-400 whitespace-nowrap">
             {saveStatus === 'saving' ? 'Đang lưu...' : 'Đã lưu'}
           </span>
         </div>
@@ -402,7 +402,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       </div>
 
       {/* Zone 2: Quick Pen Slots + Quick Board Switcher + Ruler */}
-      <div className="flex items-center gap-1.5 bg-slate-100/80 dark:bg-slate-800/70 p-1 rounded-xl border border-slate-200/80 dark:border-slate-700/80 relative" ref={slotEditorRef}>
+      <div className="flex items-center gap-1 bg-slate-100/80 dark:bg-slate-800/70 p-1 rounded-xl border border-slate-200/80 dark:border-slate-700/80 relative shrink-0" ref={slotEditorRef}>
         {penSlots.map((slot) => {
           const selected = isInkToolActive && activeSlotId === slot.id;
           return (
@@ -419,7 +419,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                 }
               }}
               title={`${slot.label} (${slot.width}px) — Nhấn lần nữa để tùy chỉnh`}
-              className={`relative h-8 w-8 rounded-lg flex items-center justify-center transition-all cursor-pointer shrink-0 ${
+              className={`relative h-7 w-7 sm:h-8 sm:w-8 rounded-lg flex items-center justify-center transition-all cursor-pointer shrink-0 ${
                 selected
                   ? 'bg-white dark:bg-slate-900 shadow-xs ring-2 ring-blue-600'
                   : 'hover:bg-white/60 dark:hover:bg-slate-700/60'
@@ -474,45 +474,45 @@ export const TopBar: React.FC<TopBarProps> = ({
         <div className="w-px h-5 bg-slate-300 dark:bg-slate-700 mx-0.5" />
 
         {/* Quick 1-click Board Surface Switcher: Whiteboard vs Realistic Greenboard vs Chalkboard */}
-        <div className="hidden md:flex items-center gap-0.5 bg-white/60 dark:bg-slate-900/60 p-0.5 rounded-lg border border-slate-200/70 dark:border-slate-700/70">
+        <div className="hidden lg:flex items-center gap-0.5 bg-white/60 dark:bg-slate-900/60 p-0.5 rounded-lg border border-slate-200/70 dark:border-slate-700/70 shrink-0">
           <button
             type="button"
             onClick={() => onQuickSwitchBoard('blank')}
             title="Bảng trắng từ tính"
-            className={`h-7 px-2 rounded-md text-[11px] font-medium flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap ${
+            className={`h-7 px-1.5 2xl:px-2 rounded-md text-[11px] font-medium flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap ${
               !isGreenboard && !isChalkboard
                 ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-xs'
                 : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
             }`}
           >
-            <span className="w-2.5 h-2.5 rounded-xs bg-white border border-slate-300" />
-            <span className="hidden xl:inline">Trắng</span>
+            <span className="w-3 h-3 rounded-xs bg-white border border-slate-300" />
+            <span className="hidden min-[1720px]:inline">Trắng</span>
           </button>
           <button
             type="button"
             onClick={() => onQuickSwitchBoard('greenboard')}
             title="Bảng xanh RAL 180 30 15 (#274C43) có lưới trắng nhạt"
-            className={`h-7 px-2 rounded-md text-[11px] font-medium flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap ${
+            className={`h-7 px-1.5 min-[1720px]:px-2 rounded-md text-[11px] font-medium flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap ${
               isGreenboard
                 ? 'bg-[#274C43] text-white shadow-xs'
                 : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
             }`}
           >
-            <span className="w-2.5 h-2.5 rounded-xs bg-[#274C43] border border-white/25" />
-            <span className="hidden xl:inline">Bảng xanh</span>
+            <span className="w-3 h-3 rounded-xs bg-[#274C43] border border-white/25" />
+            <span className="hidden min-[1720px]:inline">Bảng xanh</span>
           </button>
           <button
             type="button"
             onClick={() => onQuickSwitchBoard('chalkboard')}
             title="Bảng đen phấn"
-            className={`h-7 px-2 rounded-md text-[11px] font-medium flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap ${
+            className={`h-7 px-1.5 min-[1720px]:px-2 rounded-md text-[11px] font-medium flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap ${
               isChalkboard
                 ? 'bg-slate-900 text-white shadow-xs'
                 : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
             }`}
           >
-            <span className="w-2.5 h-2.5 rounded-xs bg-[#1B2027] border border-white/25" />
-            <span className="hidden xl:inline">Đen</span>
+            <span className="w-3 h-3 rounded-xs bg-[#1B2027] border border-white/25" />
+            <span className="hidden min-[1720px]:inline">Đen</span>
           </button>
         </div>
 
@@ -528,7 +528,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           }`}
         >
           <Shapes className="w-3.5 h-3.5" />
-          <span className="hidden 2xl:inline">Tự nắn</span>
+          <span className="hidden min-[1720px]:inline">Tự nắn</span>
         </button>
 
         {/* Interactive Ruler Toggle */}
@@ -543,7 +543,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           }`}
         >
           <Ruler className="w-3.5 h-3.5" />
-          <span className="hidden 2xl:inline">Thước</span>
+          <span className="hidden min-[1720px]:inline">Thước</span>
         </button>
 
         {/* Quick Custom Color Strip Popover */}
@@ -675,7 +675,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           }`}
         >
           <Smartphone className="w-3.5 h-3.5" />
-          <span className="hidden 2xl:inline">
+          <span className="hidden min-[1720px]:inline">
             {stylusOnly ? 'Chỉ bút' : 'Tay & Bút'}
           </span>
         </button>
@@ -687,7 +687,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           className="h-8 px-2 rounded-lg flex items-center gap-1 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
         >
           <BookOpen className="w-3.5 h-3.5" />
-          <span className="hidden xl:inline">Sổ tay</span>
+          <span className="hidden 2xl:inline">Sổ tay</span>
         </button>
 
         <button
@@ -710,14 +710,14 @@ export const TopBar: React.FC<TopBarProps> = ({
           type="button"
           onClick={onOpenWebLink}
           title="Tạo Link Web chia sẻ & Tên miền riêng (Không cần Server)"
-          className={`h-8 px-2.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+          className={`h-8 px-2 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
             activeSlug
               ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
               : 'bg-blue-600 hover:bg-blue-700 text-white'
           }`}
         >
           <Globe className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline font-mono-tabular max-w-[120px] truncate">
+          <span className="hidden xl:inline font-mono-tabular max-w-[96px] truncate">
             {activeSlug ? `#${activeSlug}` : 'Link Web'}
           </span>
         </button>
@@ -729,7 +729,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           className="h-8 px-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium flex items-center gap-1 whitespace-nowrap shrink-0 cursor-pointer"
         >
           <Save className="w-3.5 h-3.5" />
-          <span className="hidden xl:inline">Xuất</span>
+          <span className="hidden 2xl:inline">Xuất</span>
         </button>
 
         <button
@@ -756,7 +756,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           ) : (
             <UserIcon className="w-3.5 h-3.5" />
           )}
-          <span className="hidden lg:inline max-w-[96px] truncate">
+          <span className="hidden xl:inline max-w-[84px] truncate">
             {user ? user.displayName || user.email?.split('@')[0] || 'Tài khoản' : 'Đăng nhập'}
           </span>
           {user && (
