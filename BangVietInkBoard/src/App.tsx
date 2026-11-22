@@ -1,14 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { onAuthStateChanged, User } from 'firebase/auth';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { AuthModal } from './components/AuthModal';
 import { HelpGuideModal } from './components/HelpGuideModal';
 import { InsertMathModal } from './components/InsertMathModal';
 import { NotebooksModal } from './components/NotebooksModal';
 import { PagesDrawer } from './components/PagesDrawer';
+import { PageTocSidebar } from './components/PageTocSidebar';
 import { SaveAsModal } from './components/SaveAsModal';
 import { ToolDock } from './components/ToolDock';
 import { TopBar } from './components/TopBar';
 import { WebLinkModal } from './components/WebLinkModal';
 import { WhiteboardCanvas } from './components/WhiteboardCanvas';
+import { auth } from './firebase';
 import {
   BoardElement,
   BoardPage,
@@ -30,6 +34,14 @@ import {
   ToolType,
   ViewportState,
 } from './types/inkboard';
+import {
+  deleteNotebookFromCloud,
+  loadUserCustomColorsFromCloud,
+  loadUserNotebooksFromCloud,
+  saveNotebookToCloud,
+  saveUserCustomColorsToCloud,
+  syncUserProfileOnLogin,
+} from './utils/cloudSync';
 import { uid } from './utils/geometry';
 import { isDarkBoardTemplate } from './utils/renderer';
 import {
@@ -43,8 +55,10 @@ import {
   FSFileHandle,
   getLastActiveNotebookId,
   listNotebooks,
+  loadLocalCustomColors,
   parseInkboardJSON,
   saveAsInkboardFile,
+  saveLocalCustomColors,
   saveNotebookToDB,
   setLastActiveNotebookId,
   writeDocToFileHandle,
@@ -55,12 +69,26 @@ interface PageHistory {
   future: BoardElement[][];
 }
 
+const PAGE_GAP = 48;
+
 export default function App() {
+  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [authRefreshKey, setAuthRefreshKey] = useState(0);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+
+  const ownerScope = authUser?.uid || 'guest';
+
   const [notebooks, setNotebooks] = useState<NotebookDocument[]>([]);
   const [doc, setDoc] = useState<NotebookDocument>(() =>
-    createBlankNotebook('Bảng viết của tôi', 'blank')
+    createBlankNotebook('Bảng viết của tôi', 'blank', undefined, 'infinite', 'guest')
   );
   const [ready, setReady] = useState(false);
+
+  // User custom colors
+  const [customColors, setCustomColors] = useState<string[]>(() =>
+    loadLocalCustomColors('guest')
+  );
 
   // Tools & UI state
   const [activeTool, setActiveTool] = useState<ToolType>('pen');
@@ -76,6 +104,7 @@ export default function App() {
   const [inkToShape, setInkToShape] = useState<boolean>(false);
   const [stylusOnly, setStylusOnly] = useState<boolean>(false);
   const [darkMode, setDarkMode] = useState<boolean>(false);
+  const [tocOpen, setTocOpen] = useState<boolean>(false);
   const [pagesDrawerOpen, setPagesDrawerOpen] = useState<boolean>(false);
   const [libraryOpen, setLibraryOpen] = useState<boolean>(false);
   const [saveAsOpen, setSaveAsOpen] = useState<boolean>(false);
@@ -84,12 +113,17 @@ export default function App() {
   const [mathModalOpen, setMathModalOpen] = useState<boolean>(false);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
 
-  // Viewport & Selection & Ruler
+  // Viewport, Scroll request, Selection & Ruler
   const [viewport, setViewport] = useState<ViewportState>({
     offsetX: 0,
     offsetY: 0,
     zoom: 1,
   });
+  const [scrollToPageRequest, setScrollToPageRequest] = useState<{
+    pageId: string;
+    seq: number;
+  } | null>(null);
+  const scrollSeqRef = useRef(0);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [ruler, setRuler] = useState<RulerState>({
     visible: false,
@@ -110,12 +144,18 @@ export default function App() {
   const imageInputRef = useRef<HTMLInputElement>(null);
   const inkboardInputRef = useRef<HTMLInputElement>(null);
   const saveTimerRef = useRef<number | null>(null);
+  const hashConsumedRef = useRef(false);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
     window.setTimeout(() => {
       setToast((prev) => (prev === msg ? null : prev));
-    }, 2800);
+    }, 3200);
+  }, []);
+
+  const triggerScrollToPage = useCallback((pageId: string) => {
+    scrollSeqRef.current += 1;
+    setScrollToPageRequest({ pageId, seq: scrollSeqRef.current });
   }, []);
 
   const syncPaletteForTemplate = useCallback((tpl: PaperTemplate) => {
@@ -132,17 +172,74 @@ export default function App() {
     }
   }, []);
 
-  // Load notebooks from URL hash (#ten=...&board=...) OR IndexedDB on mount
+  // Listen to Firebase Auth state changes
   useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (user) => {
+      setAuthUser(user);
+      setAuthReady(true);
+    });
+    return () => unsub();
+  }, []);
+
+  // Load isolated notebooks + custom colors whenever authUser / ownerScope changes
+  useEffect(() => {
+    if (!authReady) return;
     let mounted = true;
+    setReady(false);
+    setSelectedIds([]);
+    setHistoryMap({});
+    setLinkedFileHandle(null);
+
     (async () => {
       try {
-        const list = await listNotebooks();
-        if (!mounted) return;
-        setNotebooks(list);
+        const localColors = loadLocalCustomColors(ownerScope);
+        setCustomColors(localColors);
 
-        // 1. Check serverless URL hash (#ten=...&board=... or #board=...)
-        if (window.location.hash && window.location.hash.length > 1) {
+        let localList = await listNotebooks(ownerScope);
+        if (!mounted) return;
+
+        // If authenticated & verified, sync profile, custom colors, and Firestore notebooks
+        if (authUser && authUser.emailVerified) {
+          try {
+            await syncUserProfileOnLogin(authUser);
+            const cloudColors = await loadUserCustomColorsFromCloud(authUser.uid);
+            if (!mounted) return;
+            if (cloudColors && cloudColors.length > 0) {
+              setCustomColors(cloudColors);
+              saveLocalCustomColors(cloudColors, ownerScope);
+            } else {
+              await saveUserCustomColorsToCloud(authUser.uid, localColors);
+            }
+
+            const cloudList = await loadUserNotebooksFromCloud(authUser.uid);
+            if (!mounted) return;
+
+            const mergedMap = new Map<string, NotebookDocument>();
+            for (const c of cloudList) mergedMap.set(c.id, c);
+            for (const l of localList) {
+              const existing = mergedMap.get(l.id);
+              if (!existing || l.updatedAt > existing.updatedAt) {
+                mergedMap.set(l.id, { ...l, ownerId: ownerScope });
+              }
+            }
+            const merged = Array.from(mergedMap.values()).sort(
+              (a, b) => b.updatedAt - a.updatedAt
+            );
+            for (const nb of merged) {
+              await saveNotebookToDB(nb, ownerScope);
+            }
+            localList = merged;
+          } catch (err) {
+            console.error('Cloud sync warning:', err);
+          }
+        }
+
+        if (!mounted) return;
+        setNotebooks(localList);
+
+        // 1. Check serverless URL hash once on startup (#ten=...&board=... or #board=...)
+        if (!hashConsumedRef.current && window.location.hash && window.location.hash.length > 1) {
+          hashConsumedRef.current = true;
           const hashParams = new URLSearchParams(window.location.hash.slice(1));
           const payload = hashParams.get('board');
           const tenParam = hashParams.get('ten');
@@ -152,18 +249,23 @@ export default function App() {
             if (hashDoc) {
               const normalizedDoc: NotebookDocument = {
                 ...hashDoc,
+                ownerId: ownerScope,
                 slug: hashDoc.slug || tenParam || undefined,
               };
-              await saveNotebookToDB(normalizedDoc);
+              await saveNotebookToDB(normalizedDoc, ownerScope);
               setDoc(normalizedDoc);
+              setNotebooks((prev) => [
+                normalizedDoc,
+                ...prev.filter((n) => n.id !== normalizedDoc.id),
+              ]);
               const firstPage =
                 normalizedDoc.pages.find((p) => p.id === normalizedDoc.activePageId) ||
                 normalizedDoc.pages[0];
-              if (firstPage && isDarkBoardTemplate(firstPage.template)) {
-                setPenSlots(DEFAULT_CHALK_SLOTS);
-                setActiveSlotId(DEFAULT_CHALK_SLOTS[0].id);
-                setActiveTool(DEFAULT_CHALK_SLOTS[0].tool);
-                setShapeStrokeColor('#F8FAFC');
+              if (firstPage) {
+                syncPaletteForTemplate(firstPage.template);
+                if (firstPage.pageSize !== 'infinite') {
+                  setTocOpen(true);
+                }
               }
               showToast(`Đã mở bảng chia sẻ: ${normalizedDoc.title}`);
               setReady(true);
@@ -171,36 +273,46 @@ export default function App() {
             }
           }
         }
+        hashConsumedRef.current = true;
 
-        const lastId = await getLastActiveNotebookId();
-        if (list.length > 0) {
-          const active = list.find((n) => n.id === lastId) || list[0];
+        const lastId = await getLastActiveNotebookId(ownerScope);
+        if (localList.length > 0) {
+          const active = localList.find((n) => n.id === lastId) || localList[0];
           setDoc(active);
           const activeP = active.pages.find((p) => p.id === active.activePageId) || active.pages[0];
-          if (activeP && isDarkBoardTemplate(activeP.template)) {
-            setPenSlots(DEFAULT_CHALK_SLOTS);
-            setActiveSlotId(DEFAULT_CHALK_SLOTS[0].id);
-            setActiveTool(DEFAULT_CHALK_SLOTS[0].tool);
-            setShapeStrokeColor('#F8FAFC');
+          if (activeP) {
+            syncPaletteForTemplate(activeP.template);
+            if (activeP.pageSize !== 'infinite') {
+              setTocOpen(true);
+            }
           }
         } else {
-          const initial = createBlankNotebook('Bảng viết của tôi', 'blank');
-          await saveNotebookToDB(initial);
-          await setLastActiveNotebookId(initial.id);
+          const initial = createBlankNotebook(
+            authUser ? `Bảng viết của ${authUser.displayName || 'tôi'}` : 'Bảng viết của tôi',
+            'blank',
+            undefined,
+            'infinite',
+            ownerScope
+          );
+          await saveNotebookToDB(initial, ownerScope);
+          await setLastActiveNotebookId(initial.id, ownerScope);
           if (!mounted) return;
           setNotebooks([initial]);
           setDoc(initial);
+          syncPaletteForTemplate('blank');
         }
+        setViewport({ offsetX: 0, offsetY: 0, zoom: 1 });
       } catch {
         // Fallback already initialized
       } finally {
         if (mounted) setReady(true);
       }
     })();
+
     return () => {
       mounted = false;
     };
-  }, [showToast]);
+  }, [authReady, authUser, authRefreshKey, ownerScope, showToast, syncPaletteForTemplate]);
 
   // Sync dark mode class on <html>
   useEffect(() => {
@@ -214,32 +326,39 @@ export default function App() {
     return () => document.removeEventListener('fullscreenchange', onFs);
   }, []);
 
-  // Auto-save debounced to IndexedDB
+  // Auto-save debounced to scoped IndexedDB + Cloud Firestore (when signed in & verified)
   useEffect(() => {
     if (!ready) return;
     setSaveStatus('saving');
     if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+    const currentScope = ownerScope;
+    const verifiedUid = authUser && authUser.emailVerified ? authUser.uid : null;
+
     saveTimerRef.current = window.setTimeout(async () => {
       try {
-        await saveNotebookToDB(doc);
-        await setLastActiveNotebookId(doc.id);
+        const scopedDoc: NotebookDocument = { ...doc, ownerId: currentScope };
+        await saveNotebookToDB(scopedDoc, currentScope);
+        await setLastActiveNotebookId(scopedDoc.id, currentScope);
+        if (verifiedUid) {
+          await saveNotebookToCloud(verifiedUid, scopedDoc);
+        }
         setNotebooks((prev) => {
-          const idx = prev.findIndex((n) => n.id === doc.id);
-          if (idx === -1) return [doc, ...prev];
+          const idx = prev.findIndex((n) => n.id === scopedDoc.id);
+          if (idx === -1) return [scopedDoc, ...prev];
           const copy = [...prev];
-          copy[idx] = doc;
+          copy[idx] = scopedDoc;
           return copy.sort((a, b) => b.updatedAt - a.updatedAt);
         });
         setSaveStatus('saved');
       } catch {
         setSaveStatus('saved');
       }
-    }, 550);
+    }, 650);
 
     return () => {
       if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
     };
-  }, [doc, ready]);
+  }, [doc, ready, ownerScope, authUser]);
 
   const activePageIndex = useMemo(() => {
     const idx = doc.pages.findIndex((p) => p.id === doc.activePageId);
@@ -248,12 +367,63 @@ export default function App() {
 
   const activePage = doc.pages[activePageIndex] || doc.pages[0];
 
+  const activePageOffset = useMemo(() => {
+    if (activePage.pageSize === 'infinite') {
+      return { x: 0, y: 0 };
+    }
+    let curY = 0;
+    for (const p of doc.pages) {
+      const dims =
+        p.pageSize === 'infinite'
+          ? { width: 1120, height: 1584 }
+          : PAGE_DIMENSIONS[p.pageSize];
+      if (p.id === activePage.id) {
+        return { x: -dims.width / 2, y: curY };
+      }
+      curY += dims.height + PAGE_GAP;
+    }
+    return { x: 0, y: 0 };
+  }, [activePage.id, activePage.pageSize, doc.pages]);
+
   const activePenSlot = useMemo(
     () => penSlots.find((s) => s.id === activeSlotId) || penSlots[0],
     [penSlots, activeSlotId]
   );
 
   const pageHistory = historyMap[activePage.id] || { past: [], future: [] };
+
+  // Custom Color Management (scoped per user + synced to cloud)
+  const handleAddCustomColor = useCallback(
+    (hex: string) => {
+      const normalized = hex.toUpperCase();
+      setCustomColors((prev) => {
+        const filtered = prev.filter((c) => c.toUpperCase() !== normalized);
+        const next = [normalized, ...filtered].slice(0, 24);
+        saveLocalCustomColors(next, ownerScope);
+        if (authUser && authUser.emailVerified) {
+          saveUserCustomColorsToCloud(authUser.uid, next).catch(() => {});
+        }
+        return next;
+      });
+      showToast(`Đã lưu màu ${normalized} vào dải màu riêng`);
+    },
+    [ownerScope, authUser, showToast]
+  );
+
+  const handleRemoveCustomColor = useCallback(
+    (hex: string) => {
+      const normalized = hex.toUpperCase();
+      setCustomColors((prev) => {
+        const next = prev.filter((c) => c.toUpperCase() !== normalized);
+        saveLocalCustomColors(next, ownerScope);
+        if (authUser && authUser.emailVerified) {
+          saveUserCustomColorsToCloud(authUser.uid, next).catch(() => {});
+        }
+        return next;
+      });
+    },
+    [ownerScope, authUser]
+  );
 
   const updateActivePage = useCallback(
     (updater: (page: BoardPage) => BoardPage) => {
@@ -280,22 +450,39 @@ export default function App() {
     [activePage.template, updateActivePage, syncPaletteForTemplate]
   );
 
-  const handleCommitElements = useCallback(
-    (nextElements: BoardElement[]) => {
-      const prevElements = activePage.elements;
-      setHistoryMap((prev) => {
-        const cur = prev[activePage.id] || { past: [], future: [] };
+  const handleCommitPageElements = useCallback(
+    (pageId: string, nextElements: BoardElement[]) => {
+      setDoc((prev) => {
+        const targetPage = prev.pages.find((p) => p.id === pageId);
+        if (!targetPage) return prev;
+        const prevElements = targetPage.elements;
+        setHistoryMap((hPrev) => {
+          const cur = hPrev[pageId] || { past: [], future: [] };
+          return {
+            ...hPrev,
+            [pageId]: {
+              past: [...cur.past.slice(-49), prevElements],
+              future: [],
+            },
+          };
+        });
         return {
           ...prev,
-          [activePage.id]: {
-            past: [...cur.past.slice(-49), prevElements],
-            future: [],
-          },
+          updatedAt: Date.now(),
+          pages: prev.pages.map((p) =>
+            p.id === pageId ? { ...p, elements: nextElements } : p
+          ),
         };
       });
-      updateActivePage((p) => ({ ...p, elements: nextElements }));
     },
-    [activePage.id, activePage.elements, updateActivePage]
+    []
+  );
+
+  const handleCommitElements = useCallback(
+    (nextElements: BoardElement[]) => {
+      handleCommitPageElements(activePage.id, nextElements);
+    },
+    [activePage.id, handleCommitPageElements]
   );
 
   const handleUndo = useCallback(() => {
@@ -333,25 +520,37 @@ export default function App() {
   // Save / Save As / Open handlers
   const handleSave = useCallback(async () => {
     setSaveStatus('saving');
-    await saveNotebookToDB(doc);
+    const scopedDoc: NotebookDocument = { ...doc, ownerId: ownerScope };
+    await saveNotebookToDB(scopedDoc, ownerScope);
+    if (authUser && authUser.emailVerified) {
+      await saveNotebookToCloud(authUser.uid, scopedDoc);
+    }
     if (linkedFileHandle) {
       try {
-        await writeDocToFileHandle(linkedFileHandle, doc);
+        await writeDocToFileHandle(linkedFileHandle, scopedDoc);
         showToast(`Đã lưu vào ${linkedFileHandle.name}`);
       } catch {
-        showToast('Đã lưu vào thư viện cục bộ');
+        showToast('Đã lưu vào thư viện cá nhân');
       }
     } else {
-      showToast('Đã lưu bảng viết vào bộ nhớ trình duyệt');
+      showToast(
+        authUser?.emailVerified
+          ? 'Đã lưu đồng bộ lên tài khoản & trình duyệt'
+          : 'Đã lưu bảng viết vào bộ nhớ trình duyệt'
+      );
     }
     setSaveStatus('saved');
-  }, [doc, linkedFileHandle, showToast]);
+  }, [doc, ownerScope, authUser, linkedFileHandle, showToast]);
 
   const importNotebookText = useCallback(
     async (rawText: string, fileName: string) => {
-      const imported = parseInkboardJSON(rawText);
-      await saveNotebookToDB(imported);
-      await setLastActiveNotebookId(imported.id);
+      const parsed = parseInkboardJSON(rawText);
+      const imported: NotebookDocument = {
+        ...parsed,
+        ownerId: ownerScope,
+      };
+      await saveNotebookToDB(imported, ownerScope);
+      await setLastActiveNotebookId(imported.id, ownerScope);
       setDoc(imported);
       setNotebooks((prev) => {
         const filtered = prev.filter((n) => n.id !== imported.id);
@@ -365,11 +564,14 @@ export default function App() {
         imported.pages.find((p) => p.id === imported.activePageId) || imported.pages[0];
       if (firstPage) {
         syncPaletteForTemplate(firstPage.template);
+        if (firstPage.pageSize !== 'infinite') {
+          setTocOpen(true);
+        }
       }
       setLibraryOpen(false);
       showToast(`Đã mở tệp ${fileName}`);
     },
-    [showToast, syncPaletteForTemplate]
+    [ownerScope, showToast, syncPaletteForTemplate]
   );
 
   const handleOpenFileTrigger = useCallback(() => {
@@ -392,12 +594,13 @@ export default function App() {
     const clone: NotebookDocument = {
       ...JSON.parse(JSON.stringify(doc)),
       id: uid('nb'),
+      ownerId: ownerScope,
       slug: undefined,
       title: newTitle,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
-    await saveNotebookToDB(clone);
+    await saveNotebookToDB(clone, ownerScope);
     setDoc(clone);
     setLinkedFileHandle(null);
     window.history.replaceState(null, '', window.location.pathname);
@@ -408,7 +611,7 @@ export default function App() {
     newTitle: string,
     ext: '.inkboard' | '.scrbleweb' | '.json' = '.scrbleweb'
   ) => {
-    const updated = { ...doc, title: newTitle, updatedAt: Date.now() };
+    const updated = { ...doc, ownerId: ownerScope, title: newTitle, updatedAt: Date.now() };
     setDoc(updated);
     const result = await saveAsInkboardFile(updated, newTitle, ext);
     if (!result.filename) return;
@@ -462,10 +665,15 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [handleUndo, handleRedo, handleSave, handleOpenFileTrigger]);
 
-  const getWorldCenter = () => ({
-    x: (window.innerWidth / 2 - viewport.offsetX) / viewport.zoom,
-    y: (window.innerHeight / 2 - viewport.offsetY) / viewport.zoom,
-  });
+  const getLocalPageCenter = () => {
+    const sideOffset = tocOpen ? 236 : 0;
+    const worldX = ((window.innerWidth - sideOffset) / 2 - viewport.offsetX) / viewport.zoom;
+    const worldY = (window.innerHeight / 2 - viewport.offsetY) / viewport.zoom;
+    return {
+      x: worldX - activePageOffset.x,
+      y: worldY - activePageOffset.y,
+    };
+  };
 
   const insertImageDataUrl = (src: string) => {
     const img = new Image();
@@ -474,7 +682,7 @@ export default function App() {
       const scale = img.width > maxW ? maxW / img.width : 1;
       const w = img.width * scale;
       const h = img.height * scale;
-      const center = getWorldCenter();
+      const center = getLocalPageCenter();
       const item: ImageItem = {
         id: uid('img'),
         type: 'image',
@@ -507,7 +715,7 @@ export default function App() {
   };
 
   const handleInsertSticky = (bg: string, textColor: string) => {
-    const center = getWorldCenter();
+    const center = getLocalPageCenter();
     const sticky: StickyItem = {
       id: uid('sticky'),
       type: 'sticky',
@@ -527,7 +735,7 @@ export default function App() {
   };
 
   const handleInsertMathText = (expr: string) => {
-    const center = getWorldCenter();
+    const center = getLocalPageCenter();
     const isDarkPaper = isDarkBoardTemplate(activePage.template);
     const item: TextItem = {
       id: uid('text'),
@@ -552,7 +760,7 @@ export default function App() {
   };
 
   const handleInsertPresetShape = (shapeType: 'axes' | 'table') => {
-    const center = getWorldCenter();
+    const center = getLocalPageCenter();
     const isDarkPaper = isDarkBoardTemplate(activePage.template);
     const shape: ShapeItem = {
       id: uid('shape'),
@@ -614,6 +822,9 @@ export default function App() {
       pages: [...prev.pages, newPage],
     }));
     setSelectedIds([]);
+    if (activePage.pageSize !== 'infinite') {
+      window.setTimeout(() => triggerScrollToPage(newPage.id), 30);
+    }
   };
 
   const handleDuplicatePage = (pageId: string) => {
@@ -633,6 +844,9 @@ export default function App() {
       activePageId: clone.id,
       pages: nextPages,
     }));
+    if (clone.pageSize !== 'infinite') {
+      window.setTimeout(() => triggerScrollToPage(clone.id), 30);
+    }
   };
 
   const handleDeletePage = (pageId: string) => {
@@ -659,19 +873,50 @@ export default function App() {
     setDoc((prev) => ({ ...prev, updatedAt: Date.now(), pages: next }));
   };
 
+  const handleSwitchAllToA4 = useCallback(() => {
+    setDoc((prev) => ({
+      ...prev,
+      updatedAt: Date.now(),
+      pages: prev.pages.map((p) => ({ ...p, pageSize: 'a4Portrait' })),
+    }));
+    setTocOpen(true);
+    window.setTimeout(() => triggerScrollToPage(activePage.id), 40);
+    showToast('Đã chuyển sang khổ A4 Dọc — Lướt chuột xuống để chuyển trang');
+  }, [activePage.id, triggerScrollToPage, showToast]);
+
+  const handleChangePageSize = useCallback(
+    (pageSize: PageSizeMode) => {
+      setDoc((prev) => ({
+        ...prev,
+        updatedAt: Date.now(),
+        pages: prev.pages.map((p) => ({ ...p, pageSize })),
+      }));
+      if (pageSize !== 'infinite') {
+        setTocOpen(true);
+        window.setTimeout(() => triggerScrollToPage(activePage.id), 40);
+      } else {
+        setViewport({ offsetX: 0, offsetY: 0, zoom: 1 });
+      }
+    },
+    [activePage.id, triggerScrollToPage]
+  );
+
   const handleFitScreen = () => {
     if (activePage.pageSize === 'infinite') {
       setViewport({ offsetX: 0, offsetY: 0, zoom: 1 });
       return;
     }
     const dims = PAGE_DIMENSIONS[activePage.pageSize];
-    const availW = window.innerWidth - (pagesDrawerOpen ? 360 : 100);
-    const availH = window.innerHeight - 96;
-    const z = Math.min(availW / dims.width, availH / dims.height, 1.2);
+    const tocW = tocOpen ? 240 : 0;
+    const drawerW = pagesDrawerOpen ? 288 : 0;
+    const canvasW = Math.max(320, window.innerWidth - tocW - drawerW);
+    const availW = Math.max(280, canvasW - 140);
+    const availH = window.innerHeight - 110;
+    const z = Math.min(availW / dims.width, availH / dims.height, 1.15);
     setViewport({
       zoom: z,
-      offsetX: (window.innerWidth - dims.width * z) / 2,
-      offsetY: (window.innerHeight - 56 - dims.height * z) / 2,
+      offsetX: canvasW / 2,
+      offsetY: 28 - activePageOffset.y * z,
     });
   };
 
@@ -713,14 +958,15 @@ export default function App() {
         inkToShape={inkToShape}
         onToggleInkToShape={() => setInkToShape((v) => !v)}
         rulerVisible={ruler.visible}
-        onToggleRuler={() =>
+        onToggleRuler={() => {
+          const center = getLocalPageCenter();
           setRuler((prev) => ({
             ...prev,
             visible: !prev.visible,
-            x: !prev.visible ? getWorldCenter().x : prev.x,
-            y: !prev.visible ? getWorldCenter().y : prev.y,
-          }))
-        }
+            x: !prev.visible ? center.x + activePageOffset.x : prev.x,
+            y: !prev.visible ? center.y + activePageOffset.y : prev.y,
+          }));
+        }}
         stylusOnly={stylusOnly}
         onToggleStylusOnly={() => setStylusOnly((v) => !v)}
         darkMode={darkMode}
@@ -733,8 +979,14 @@ export default function App() {
         onToggleFullscreen={handleToggleFullscreen}
         onOpenLibrary={() => setLibraryOpen(true)}
         onNewNotebook={async () => {
-          const nb = createBlankNotebook(`Bảng viết ${notebooks.length + 1}`, activePage.template);
-          await saveNotebookToDB(nb);
+          const nb = createBlankNotebook(
+            `Bảng viết ${notebooks.length + 1}`,
+            activePage.template,
+            undefined,
+            activePage.pageSize,
+            ownerScope
+          );
+          await saveNotebookToDB(nb, ownerScope);
           setDoc(nb);
           setLinkedFileHandle(null);
           window.history.replaceState(null, '', window.location.pathname);
@@ -769,115 +1021,157 @@ export default function App() {
         }}
         saveStatus={saveStatus}
         linkedFileName={linkedFileHandle?.name ?? null}
+        tocOpen={tocOpen}
+        onToggleToc={() => setTocOpen((v) => !v)}
+        user={authUser}
+        onOpenAuth={() => setAuthModalOpen(true)}
+        customColors={customColors}
+        onAddCustomColor={handleAddCustomColor}
+        onRemoveCustomColor={handleRemoveCustomColor}
       />
 
       {/* Main Workspace Area */}
       <div className="relative flex-1 flex overflow-hidden">
-        <ToolDock
-          activeTool={activeTool}
-          onSelectTool={(t) => {
-            if (t === 'pen' || t === 'pencil' || t === 'highlighter') {
-              const match = penSlots.find((s) => s.tool === t);
-              if (match) setActiveSlotId(match.id);
-            }
-            setActiveTool(t);
+        {/* Left Mục lục (Table of Contents) Sidebar */}
+        <PageTocSidebar
+          open={tocOpen}
+          onClose={() => setTocOpen(false)}
+          pages={doc.pages}
+          activePageId={activePage.id}
+          onSelectPage={(id) => {
+            setDoc((prev) => ({ ...prev, activePageId: id }));
+            setSelectedIds([]);
+            triggerScrollToPage(id);
           }}
-          selectMode={selectMode}
-          onSelectModeChange={setSelectMode}
-          eraserMode={eraserMode}
-          onEraserModeChange={setEraserMode}
-          eraserSize={eraserSize}
-          onEraserSizeChange={setEraserSize}
-          onClearPage={() => {
-            if (activePage.elements.length > 0) {
-              handleCommitElements([]);
-              setSelectedIds([]);
-            }
-          }}
-          activeShape={activeShape}
-          onSelectShape={setActiveShape}
-          shapeStrokeColor={shapeStrokeColor}
-          onShapeStrokeColorChange={setShapeStrokeColor}
-          shapeFillColor={shapeFillColor}
-          onShapeFillColorChange={setShapeFillColor}
-          shapeDashed={shapeDashed}
-          onShapeDashedChange={setShapeDashed}
-          onTriggerImageUpload={() => imageInputRef.current?.click()}
-          onInsertSticky={handleInsertSticky}
-          onInsertMath={() => setMathModalOpen(true)}
-          onInsertAxesPreset={() => handleInsertPresetShape('axes')}
-          onInsertTablePreset={() => handleInsertPresetShape('table')}
-          zoom={viewport.zoom}
-          onZoomIn={() =>
-            setViewport((v) => ({ ...v, zoom: Math.min(4, v.zoom * 1.15) }))
-          }
-          onZoomOut={() =>
-            setViewport((v) => ({ ...v, zoom: Math.max(0.2, v.zoom * 0.85) }))
-          }
-          onZoomReset={() => setViewport((v) => ({ ...v, zoom: 1 }))}
-          onFitScreen={handleFitScreen}
+          onAddPage={handleAddPage}
+          onDeletePage={handleDeletePage}
+          onSwitchAllToA4={handleSwitchAllToA4}
         />
 
-        <WhiteboardCanvas
-          page={activePage}
-          viewport={viewport}
-          onViewportChange={setViewport}
-          activeTool={activeTool}
-          activePenSlot={activePenSlot}
-          selectMode={selectMode}
-          eraserMode={eraserMode}
-          eraserSize={eraserSize}
-          activeShape={activeShape}
-          shapeStrokeColor={shapeStrokeColor}
-          shapeFillColor={shapeFillColor}
-          shapeDashed={shapeDashed}
-          inkToShape={inkToShape}
-          stylusOnly={stylusOnly}
-          darkMode={darkMode}
-          ruler={ruler}
-          onRulerChange={setRuler}
-          selectedIds={selectedIds}
-          onSelectedIdsChange={setSelectedIds}
-          onCommitElements={handleCommitElements}
-          onSelectTool={setActiveTool}
-        />
+        {/* Canvas Pane (ToolDock + Zoom Bar + Canvas + Pager sit cleanly inside) */}
+        <div className="relative flex-1 flex overflow-hidden">
+          <ToolDock
+            activeTool={activeTool}
+            onSelectTool={(t) => {
+              if (t === 'pen' || t === 'pencil' || t === 'highlighter') {
+                const match = penSlots.find((s) => s.tool === t);
+                if (match) setActiveSlotId(match.id);
+              }
+              setActiveTool(t);
+            }}
+            selectMode={selectMode}
+            onSelectModeChange={setSelectMode}
+            eraserMode={eraserMode}
+            onEraserModeChange={setEraserMode}
+            eraserSize={eraserSize}
+            onEraserSizeChange={setEraserSize}
+            onClearPage={() => {
+              if (activePage.elements.length > 0) {
+                handleCommitElements([]);
+                setSelectedIds([]);
+              }
+            }}
+            activeShape={activeShape}
+            onSelectShape={setActiveShape}
+            shapeStrokeColor={shapeStrokeColor}
+            onShapeStrokeColorChange={setShapeStrokeColor}
+            shapeFillColor={shapeFillColor}
+            onShapeFillColorChange={setShapeFillColor}
+            shapeDashed={shapeDashed}
+            onShapeDashedChange={setShapeDashed}
+            onTriggerImageUpload={() => imageInputRef.current?.click()}
+            onInsertSticky={handleInsertSticky}
+            onInsertMath={() => setMathModalOpen(true)}
+            onInsertAxesPreset={() => handleInsertPresetShape('axes')}
+            onInsertTablePreset={() => handleInsertPresetShape('table')}
+            zoom={viewport.zoom}
+            onZoomIn={() =>
+              setViewport((v) => ({ ...v, zoom: Math.min(4, v.zoom * 1.15) }))
+            }
+            onZoomOut={() =>
+              setViewport((v) => ({ ...v, zoom: Math.max(0.2, v.zoom * 0.85) }))
+            }
+            onZoomReset={() => setViewport((v) => ({ ...v, zoom: 1 }))}
+            onFitScreen={handleFitScreen}
+            customColors={customColors}
+            onAddCustomColor={handleAddCustomColor}
+            onRemoveCustomColor={handleRemoveCustomColor}
+          />
 
-        {/* Quick Bottom-Center Multi-Page Switcher */}
-        {doc.pages.length > 1 && (
-          <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1 px-2 py-1 rounded-xl bg-white/95 dark:bg-[#161920]/95 backdrop-blur-md border border-slate-200 dark:border-slate-800 shadow-md select-none">
-            <button
-              type="button"
-              disabled={activePageIndex === 0}
-              onClick={() => {
-                setDoc((prev) => ({
-                  ...prev,
-                  activePageId: prev.pages[activePageIndex - 1].id,
-                }));
-                setSelectedIds([]);
-              }}
-              className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-30 cursor-pointer"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <span className="px-2 text-xs font-mono-tabular font-medium text-slate-700 dark:text-slate-200">
-              Trang {activePageIndex + 1} / {doc.pages.length}
-            </span>
-            <button
-              type="button"
-              disabled={activePageIndex === doc.pages.length - 1}
-              onClick={() => {
-                setDoc((prev) => ({
-                  ...prev,
-                  activePageId: prev.pages[activePageIndex + 1].id,
-                }));
-                setSelectedIds([]);
-              }}
-              className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-30 cursor-pointer"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
-        )}
+          <WhiteboardCanvas
+            page={activePage}
+            pages={doc.pages}
+            viewport={viewport}
+            onViewportChange={setViewport}
+            activeTool={activeTool}
+            activePenSlot={activePenSlot}
+            selectMode={selectMode}
+            eraserMode={eraserMode}
+            eraserSize={eraserSize}
+            activeShape={activeShape}
+            shapeStrokeColor={shapeStrokeColor}
+            shapeFillColor={shapeFillColor}
+            shapeDashed={shapeDashed}
+            inkToShape={inkToShape}
+            stylusOnly={stylusOnly}
+            darkMode={darkMode}
+            ruler={ruler}
+            onRulerChange={setRuler}
+            selectedIds={selectedIds}
+            onSelectedIdsChange={setSelectedIds}
+            onCommitPageElements={handleCommitPageElements}
+            onSelectPage={(pageId) => {
+              setDoc((prev) =>
+                prev.activePageId === pageId ? prev : { ...prev, activePageId: pageId }
+              );
+            }}
+            scrollToPageRequest={scrollToPageRequest}
+            onSelectTool={setActiveTool}
+          />
+
+          {/* Quick Bottom-Center Multi-Page Switcher */}
+          {doc.pages.length > 1 && (
+            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1 px-2 py-1 rounded-xl bg-white/95 dark:bg-[#161920]/95 backdrop-blur-md border border-slate-200 dark:border-slate-800 shadow-md select-none">
+              <button
+                type="button"
+                disabled={activePageIndex === 0}
+                onClick={() => {
+                  const prevPage = doc.pages[activePageIndex - 1];
+                  if (!prevPage) return;
+                  setDoc((prev) => ({
+                    ...prev,
+                    activePageId: prevPage.id,
+                  }));
+                  setSelectedIds([]);
+                  triggerScrollToPage(prevPage.id);
+                }}
+                className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-30 cursor-pointer"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <span className="px-2 text-xs font-mono-tabular font-medium text-slate-700 dark:text-slate-200">
+                Trang {activePageIndex + 1} / {doc.pages.length}
+              </span>
+              <button
+                type="button"
+                disabled={activePageIndex === doc.pages.length - 1}
+                onClick={() => {
+                  const nextPage = doc.pages[activePageIndex + 1];
+                  if (!nextPage) return;
+                  setDoc((prev) => ({
+                    ...prev,
+                    activePageId: nextPage.id,
+                  }));
+                  setSelectedIds([]);
+                  triggerScrollToPage(nextPage.id);
+                }}
+                className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-30 cursor-pointer"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+        </div>
 
         {/* Right Pages & Templates Drawer */}
         <PagesDrawer
@@ -888,15 +1182,14 @@ export default function App() {
           onSelectPage={(id) => {
             setDoc((prev) => ({ ...prev, activePageId: id }));
             setSelectedIds([]);
+            triggerScrollToPage(id);
           }}
           onAddPage={handleAddPage}
           onDuplicatePage={handleDuplicatePage}
           onDeletePage={handleDeletePage}
           onMovePage={handleMovePage}
           onChangeTemplate={handleTemplateChange}
-          onChangePageSize={(pageSize: PageSizeMode) => {
-            updateActivePage((p) => ({ ...p, pageSize }));
-          }}
+          onChangePageSize={handleChangePageSize}
           onChangeGridSize={(gridSize: number) => {
             updateActivePage((p) => ({ ...p, gridSize }));
           }}
@@ -920,6 +1213,26 @@ export default function App() {
       />
 
       {/* Modals */}
+      <AuthModal
+        open={authModalOpen}
+        onClose={() => setAuthModalOpen(false)}
+        user={authUser}
+        onAuthToast={showToast}
+        onRefreshUser={async () => {
+          if (auth.currentUser) {
+            await auth.currentUser.reload();
+            await auth.currentUser.getIdToken(true);
+            setAuthUser(auth.currentUser);
+            setAuthRefreshKey((k) => k + 1);
+            if (auth.currentUser.emailVerified) {
+              showToast('Email đã xác minh! Bắt đầu đồng bộ dữ liệu riêng.');
+            } else {
+              showToast('Chưa thấy xác minh email. Vui lòng kiểm tra hộp thư rồi thử lại.');
+            }
+          }
+        }}
+      />
+
       <WebLinkModal
         open={webLinkOpen}
         onClose={() => setWebLinkOpen(false)}
@@ -943,10 +1256,21 @@ export default function App() {
           window.history.replaceState(null, '', window.location.pathname);
           setSelectedIds([]);
           setViewport({ offsetX: 0, offsetY: 0, zoom: 1 });
+          const firstP = nb.pages.find((p) => p.id === nb.activePageId) || nb.pages[0];
+          if (firstP) {
+            syncPaletteForTemplate(firstP.template);
+            if (firstP.pageSize !== 'infinite') setTocOpen(true);
+          }
         }}
         onCreateNotebook={async () => {
-          const nb = createBlankNotebook(`Bảng viết ${notebooks.length + 1}`, activePage.template);
-          await saveNotebookToDB(nb);
+          const nb = createBlankNotebook(
+            `Bảng viết ${notebooks.length + 1}`,
+            activePage.template,
+            undefined,
+            activePage.pageSize,
+            ownerScope
+          );
+          await saveNotebookToDB(nb, ownerScope);
           setDoc(nb);
           setLinkedFileHandle(null);
           window.history.replaceState(null, '', window.location.pathname);
@@ -957,17 +1281,21 @@ export default function App() {
           const clone: NotebookDocument = {
             ...JSON.parse(JSON.stringify(nb)),
             id: uid('nb'),
+            ownerId: ownerScope,
             slug: undefined,
             title: `${nb.title} (Bản sao)`,
             createdAt: Date.now(),
             updatedAt: Date.now(),
           };
-          await saveNotebookToDB(clone);
+          await saveNotebookToDB(clone, ownerScope);
           setNotebooks((prev) => [clone, ...prev]);
           showToast('Đã nhân bản sổ tay');
         }}
         onDeleteNotebook={async (id) => {
           await deleteNotebookFromDB(id);
+          if (authUser && authUser.emailVerified) {
+            deleteNotebookFromCloud(authUser.uid, id).catch(() => {});
+          }
           const remaining = notebooks.filter((n) => n.id !== id);
           setNotebooks(remaining);
           if (doc.id === id && remaining.length > 0) {

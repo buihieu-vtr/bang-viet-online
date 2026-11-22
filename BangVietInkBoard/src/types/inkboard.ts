@@ -139,6 +139,7 @@ export interface BoardPage {
 
 export interface NotebookDocument {
   id: string;
+  ownerId?: string;
   slug?: string;
   title: string;
   createdAt: number;

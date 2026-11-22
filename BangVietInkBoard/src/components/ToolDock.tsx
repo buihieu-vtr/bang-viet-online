@@ -37,6 +37,7 @@ import {
   STICKY_COLORS,
   ToolType,
 } from '../types/inkboard';
+import { ColorPalettePicker } from './ColorPalettePicker';
 
 interface ToolDockProps {
   activeTool: ToolType;
@@ -66,6 +67,9 @@ interface ToolDockProps {
   onZoomOut: () => void;
   onZoomReset: () => void;
   onFitScreen: () => void;
+  customColors: string[];
+  onAddCustomColor: (hex: string) => void;
+  onRemoveCustomColor: (hex: string) => void;
 }
 
 const SHAPE_OPTIONS: { id: ShapeType; label: string; icon: React.ReactNode }[] = [
@@ -81,16 +85,6 @@ const SHAPE_OPTIONS: { id: ShapeType; label: string; icon: React.ReactNode }[] =
   { id: 'star', label: 'Ngôi sao', icon: <Star className="w-4 h-4" /> },
   { id: 'axes', label: 'Hệ trục Oxy', icon: <Axis3D className="w-4 h-4" /> },
   { id: 'table', label: 'Bảng 3×3', icon: <Grid3X3 className="w-4 h-4" /> },
-];
-
-const SHAPE_COLORS = [
-  '#0F172A',
-  '#2563EB',
-  '#DC2626',
-  '#16A34A',
-  '#D97706',
-  '#9333EA',
-  '#FFFFFF',
 ];
 
 export const ToolDock: React.FC<ToolDockProps> = ({
@@ -121,8 +115,12 @@ export const ToolDock: React.FC<ToolDockProps> = ({
   onZoomOut,
   onZoomReset,
   onFitScreen,
+  customColors,
+  onAddCustomColor,
+  onRemoveCustomColor,
 }) => {
   const [openMenu, setOpenMenu] = useState<'select' | 'eraser' | 'shape' | 'insert' | null>(null);
+  const [shapeColorTab, setShapeColorTab] = useState<'stroke' | 'fill'>('stroke');
   const dockRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -182,7 +180,7 @@ export const ToolDock: React.FC<ToolDockProps> = ({
       {/* Left Floating Vertical Tool Dock */}
       <div
         ref={dockRef}
-        className="fixed left-3 top-1/2 -translate-y-1/2 z-30 flex flex-col gap-1 p-1.5 rounded-2xl bg-white/95 dark:bg-[#161920]/95 backdrop-blur-md border border-slate-200 dark:border-slate-800 shadow-lg select-none"
+        className="absolute left-3 top-1/2 -translate-y-1/2 z-30 flex flex-col gap-1 p-1.5 rounded-2xl bg-white/95 dark:bg-[#161920]/95 backdrop-blur-md border border-slate-200 dark:border-slate-800 shadow-lg select-none"
       >
         {toolBtn(
           'select',
@@ -323,7 +321,7 @@ export const ToolDock: React.FC<ToolDockProps> = ({
 
         {/* Popover: Shapes Palette */}
         {openMenu === 'shape' && (
-          <div className="absolute left-14 top-20 w-72 rounded-xl bg-white dark:bg-[#1B1F27] border border-slate-200 dark:border-slate-700 shadow-xl p-3 space-y-3">
+          <div className="absolute left-14 top-10 w-76 max-h-[75vh] overflow-y-auto rounded-xl bg-white dark:bg-[#1B1F27] border border-slate-200 dark:border-slate-700 shadow-xl p-3 space-y-3">
             <div className="text-xs font-semibold text-slate-900 dark:text-slate-100">
               Chọn hình học
             </div>
@@ -348,54 +346,61 @@ export const ToolDock: React.FC<ToolDockProps> = ({
               ))}
             </div>
 
-            <div className="space-y-1.5 pt-1 border-t border-slate-100 dark:border-slate-800">
-              <div className="text-[11px] text-slate-500">Màu viền</div>
-              <div className="flex items-center gap-1.5">
-                {SHAPE_COLORS.map((c) => (
-                  <button
-                    key={c}
-                    type="button"
-                    onClick={() => onShapeStrokeColorChange(c)}
-                    className={`w-6 h-6 rounded-full border cursor-pointer ${
-                      shapeStrokeColor === c
-                        ? 'ring-2 ring-blue-600 ring-offset-1 dark:ring-offset-slate-900'
-                        : 'border-slate-300 dark:border-slate-600'
-                    }`}
-                    style={{ backgroundColor: c }}
-                  />
-                ))}
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <div className="text-[11px] text-slate-500">Màu tô nền</div>
-              <div className="flex items-center gap-1.5">
+            <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-2.5">
+              <div className="grid grid-cols-2 gap-1 p-1 rounded-lg bg-slate-100 dark:bg-slate-800">
                 <button
                   type="button"
-                  onClick={() => onShapeFillColorChange('transparent')}
-                  title="Không tô nền"
-                  className={`w-6 h-6 rounded-full border text-[10px] font-bold flex items-center justify-center cursor-pointer ${
-                    shapeFillColor === 'transparent'
-                      ? 'ring-2 ring-blue-600 border-blue-600 text-blue-600'
-                      : 'border-slate-300 text-slate-400'
+                  onClick={() => setShapeColorTab('stroke')}
+                  className={`py-1.5 text-[11px] font-semibold rounded-md flex items-center justify-center gap-1.5 cursor-pointer ${
+                    shapeColorTab === 'stroke'
+                      ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'
+                      : 'text-slate-500'
                   }`}
                 >
-                  ∅
-                </button>
-                {['#DBEAFE', '#FEE2E2', '#DCFCE7', '#FEF3C7', '#F3E8FF'].map((c) => (
-                  <button
-                    key={c}
-                    type="button"
-                    onClick={() => onShapeFillColorChange(c)}
-                    className={`w-6 h-6 rounded-full border cursor-pointer ${
-                      shapeFillColor === c
-                        ? 'ring-2 ring-blue-600 ring-offset-1 dark:ring-offset-slate-900'
-                        : 'border-slate-300 dark:border-slate-600'
-                    }`}
-                    style={{ backgroundColor: c }}
+                  <span
+                    className="w-3 h-3 rounded-full border border-black/15"
+                    style={{ backgroundColor: shapeStrokeColor }}
                   />
-                ))}
+                  Màu viền
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShapeColorTab('fill')}
+                  className={`py-1.5 text-[11px] font-semibold rounded-md flex items-center justify-center gap-1.5 cursor-pointer ${
+                    shapeColorTab === 'fill'
+                      ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'
+                      : 'text-slate-500'
+                  }`}
+                >
+                  <span
+                    className="w-3 h-3 rounded-full border border-black/15"
+                    style={{
+                      backgroundColor:
+                        shapeFillColor === 'transparent' ? '#ffffff' : shapeFillColor,
+                    }}
+                  />
+                  Màu tô nền
+                </button>
               </div>
+
+              {shapeColorTab === 'stroke' ? (
+                <ColorPalettePicker
+                  color={shapeStrokeColor}
+                  onChange={onShapeStrokeColorChange}
+                  customColors={customColors}
+                  onAddCustomColor={onAddCustomColor}
+                  onRemoveCustomColor={onRemoveCustomColor}
+                />
+              ) : (
+                <ColorPalettePicker
+                  color={shapeFillColor}
+                  onChange={onShapeFillColorChange}
+                  customColors={customColors}
+                  onAddCustomColor={onAddCustomColor}
+                  onRemoveCustomColor={onRemoveCustomColor}
+                  allowTransparent
+                />
+              )}
             </div>
 
             <label className="flex items-center justify-between text-xs text-slate-700 dark:text-slate-200 cursor-pointer pt-1">
@@ -503,7 +508,7 @@ export const ToolDock: React.FC<ToolDockProps> = ({
       </div>
 
       {/* Bottom-left Compact Zoom Bar */}
-      <div className="fixed left-3 bottom-3 z-30 flex items-center gap-0.5 p-1 rounded-xl bg-white/95 dark:bg-[#161920]/95 backdrop-blur-md border border-slate-200 dark:border-slate-800 shadow-md select-none">
+      <div className="absolute left-3 bottom-3 z-30 flex items-center gap-0.5 p-1 rounded-xl bg-white/95 dark:bg-[#161920]/95 backdrop-blur-md border border-slate-200 dark:border-slate-800 shadow-md select-none">
         <button
           type="button"
           onClick={onZoomOut}

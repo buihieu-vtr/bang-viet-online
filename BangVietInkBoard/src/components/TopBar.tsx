@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { User } from 'firebase/auth';
 import {
   BookOpen,
-  Check,
   ChevronDown,
   Download,
   FileImage,
@@ -14,6 +14,8 @@ import {
   Maximize2,
   Minimize2,
   Moon,
+  Palette,
+  PanelLeft,
   PenLine,
   Redo2,
   Ruler,
@@ -23,8 +25,10 @@ import {
   Smartphone,
   Sun,
   Undo2,
+  User as UserIcon,
 } from 'lucide-react';
 import { PaperTemplate, PenSlot, ToolType } from '../types/inkboard';
+import { ColorPalettePicker } from './ColorPalettePicker';
 
 interface TopBarProps {
   title: string;
@@ -67,23 +71,14 @@ interface TopBarProps {
   onExportPDF: () => void;
   saveStatus: 'saved' | 'saving';
   linkedFileName: string | null;
+  tocOpen: boolean;
+  onToggleToc: () => void;
+  user: User | null;
+  onOpenAuth: () => void;
+  customColors: string[];
+  onAddCustomColor: (hex: string) => void;
+  onRemoveCustomColor: (hex: string) => void;
 }
-
-const SWATCHES = [
-  '#0F172A',
-  '#334155',
-  '#FFFFFF',
-  '#FDE047',
-  '#F9A8D4',
-  '#7DD3FC',
-  '#2563EB',
-  '#059669',
-  '#DC2626',
-  '#EA580C',
-  '#FACC15',
-  '#9333EA',
-  '#EC4899',
-];
 
 export const TopBar: React.FC<TopBarProps> = ({
   title,
@@ -126,9 +121,17 @@ export const TopBar: React.FC<TopBarProps> = ({
   onExportPDF,
   saveStatus,
   linkedFileName,
+  tocOpen,
+  onToggleToc,
+  user,
+  onOpenAuth,
+  customColors,
+  onAddCustomColor,
+  onRemoveCustomColor,
 }) => {
   const [fileMenuOpen, setFileMenuOpen] = useState(false);
   const [editingSlotId, setEditingSlotId] = useState<string | null>(null);
+  const [quickColorOpen, setQuickColorOpen] = useState(false);
   const [editingTitle, setEditingTitle] = useState(false);
   const [draftTitle, setDraftTitle] = useState(title);
   const fileMenuRef = useRef<HTMLDivElement>(null);
@@ -145,6 +148,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       }
       if (slotEditorRef.current && !slotEditorRef.current.contains(e.target as Node)) {
         setEditingSlotId(null);
+        setQuickColorOpen(false);
       }
     };
     window.addEventListener('mousedown', handleClickOutside);
@@ -153,6 +157,7 @@ export const TopBar: React.FC<TopBarProps> = ({
 
   const isInkToolActive =
     activeTool === 'pen' || activeTool === 'pencil' || activeTool === 'highlighter';
+  const currentActiveSlot = penSlots.find((s) => s.id === activeSlotId) || penSlots[0];
 
   const commitTitle = () => {
     setEditingTitle(false);
@@ -180,6 +185,21 @@ export const TopBar: React.FC<TopBarProps> = ({
             InkBoard
           </span>
         </div>
+
+        {/* Mục lục (A4 Outline Sidebar Toggle) */}
+        <button
+          type="button"
+          onClick={onToggleToc}
+          title="Mục lục trang A4 (xem trước & lướt nhanh)"
+          className={`h-9 px-2.5 rounded-lg flex items-center gap-1.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+            tocOpen
+              ? 'bg-blue-600 text-white shadow-xs'
+              : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+          }`}
+        >
+          <PanelLeft className="w-4 h-4" />
+          <span className="hidden md:inline">Mục lục</span>
+        </button>
 
         {/* File Menu */}
         <div className="relative" ref={fileMenuRef}>
@@ -390,6 +410,7 @@ export const TopBar: React.FC<TopBarProps> = ({
               key={slot.id}
               type="button"
               onClick={() => {
+                setQuickColorOpen(false);
                 if (selected) {
                   setEditingSlotId((prev) => (prev === slot.id ? null : slot.id));
                 } else {
@@ -427,6 +448,28 @@ export const TopBar: React.FC<TopBarProps> = ({
             </button>
           );
         })}
+
+        {/* Quick Custom Color Strip Trigger */}
+        <button
+          type="button"
+          onClick={() => {
+            setEditingSlotId(null);
+            setQuickColorOpen((v) => !v);
+          }}
+          title="Dải màu tự chọn cho bút đang dùng"
+          className={`h-8 px-2 rounded-lg flex items-center gap-1.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+            quickColorOpen
+              ? 'bg-white dark:bg-slate-900 text-blue-600 shadow-xs ring-2 ring-blue-600'
+              : 'text-slate-600 dark:text-slate-300 hover:bg-white/70 dark:hover:bg-slate-700/70'
+          }`}
+        >
+          <span
+            className="w-3.5 h-3.5 rounded-full border border-black/20 dark:border-white/25 shrink-0"
+            style={{ backgroundColor: currentActiveSlot.color }}
+          />
+          <Palette className="w-3.5 h-3.5" />
+          <span className="hidden 2xl:inline">Dải màu</span>
+        </button>
 
         <div className="w-px h-5 bg-slate-300 dark:bg-slate-700 mx-0.5" />
 
@@ -503,9 +546,25 @@ export const TopBar: React.FC<TopBarProps> = ({
           <span className="hidden 2xl:inline">Thước</span>
         </button>
 
+        {/* Quick Custom Color Strip Popover */}
+        {quickColorOpen && (
+          <div className="absolute top-12 left-0 w-76 rounded-xl bg-white dark:bg-[#1B1F27] border border-slate-200 dark:border-slate-700 shadow-xl p-3.5 z-50">
+            <ColorPalettePicker
+              label={`Màu bút (${currentActiveSlot.label})`}
+              color={currentActiveSlot.color}
+              onChange={(hex) =>
+                onUpdatePenSlot({ ...currentActiveSlot, color: hex })
+              }
+              customColors={customColors}
+              onAddCustomColor={onAddCustomColor}
+              onRemoveCustomColor={onRemoveCustomColor}
+            />
+          </div>
+        )}
+
         {/* Pen Slot Customizer Popover */}
         {editingSlot && (
-          <div className="absolute top-12 left-0 w-72 rounded-xl bg-white dark:bg-[#1B1F27] border border-slate-200 dark:border-slate-700 shadow-xl p-3.5 z-50">
+          <div className="absolute top-12 left-0 w-76 rounded-xl bg-white dark:bg-[#1B1F27] border border-slate-200 dark:border-slate-700 shadow-xl p-3.5 z-50">
             <div className="flex items-center justify-between mb-3">
               <span className="text-xs font-semibold text-slate-900 dark:text-slate-100">
                 Tùy chỉnh: {editingSlot.label}
@@ -548,44 +607,14 @@ export const TopBar: React.FC<TopBarProps> = ({
               ))}
             </div>
 
-            <div className="flex flex-wrap gap-1.5 mb-3">
-              {SWATCHES.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => onUpdatePenSlot({ ...editingSlot, color: c })}
-                  className={`w-6 h-6 rounded-full border flex items-center justify-center cursor-pointer transition-transform hover:scale-110 ${
-                    editingSlot.color.toLowerCase() === c.toLowerCase()
-                      ? 'ring-2 ring-blue-600 ring-offset-1 dark:ring-offset-slate-900'
-                      : 'border-slate-300 dark:border-slate-600'
-                  }`}
-                  style={{ backgroundColor: c }}
-                >
-                  {editingSlot.color.toLowerCase() === c.toLowerCase() && (
-                    <Check
-                      className={`w-3 h-3 ${
-                        c === '#FFFFFF' || c === '#FACC15' || c === '#FDE047'
-                          ? 'text-slate-900'
-                          : 'text-white'
-                      }`}
-                    />
-                  )}
-                </button>
-              ))}
-              <label
-                title="Chọn màu tùy ý"
-                className="w-6 h-6 rounded-full border border-dashed border-slate-400 flex items-center justify-center text-[10px] font-bold text-slate-500 cursor-pointer overflow-hidden relative"
-              >
-                +
-                <input
-                  type="color"
-                  value={editingSlot.color}
-                  onChange={(e) =>
-                    onUpdatePenSlot({ ...editingSlot, color: e.target.value })
-                  }
-                  className="opacity-0 absolute inset-0 cursor-pointer"
-                />
-              </label>
+            <div className="mb-3">
+              <ColorPalettePicker
+                color={editingSlot.color}
+                onChange={(hex) => onUpdatePenSlot({ ...editingSlot, color: hex })}
+                customColors={customColors}
+                onAddCustomColor={onAddCustomColor}
+                onRemoveCustomColor={onRemoveCustomColor}
+              />
             </div>
 
             <div className="space-y-1.5 mb-2.5">
@@ -701,6 +730,42 @@ export const TopBar: React.FC<TopBarProps> = ({
         >
           <Save className="w-3.5 h-3.5" />
           <span className="hidden xl:inline">Xuất</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={onOpenAuth}
+          title={
+            user
+              ? `Tài khoản: ${user.displayName || user.email} — Nhấn để quản lý / đăng xuất`
+              : 'Đăng nhập / Đăng ký để tách biệt dữ liệu người dùng'
+          }
+          className={`h-8 px-2 rounded-lg border text-xs font-medium flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer transition-colors ${
+            user
+              ? 'border-emerald-200 dark:border-emerald-800/70 bg-emerald-50/70 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-200 hover:bg-emerald-100/70'
+              : 'border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+          }`}
+        >
+          {user?.photoURL ? (
+            <img
+              src={user.photoURL}
+              alt={user.displayName || 'User'}
+              className="w-4 h-4 rounded-full object-cover"
+              referrerPolicy="no-referrer"
+            />
+          ) : (
+            <UserIcon className="w-3.5 h-3.5" />
+          )}
+          <span className="hidden lg:inline max-w-[96px] truncate">
+            {user ? user.displayName || user.email?.split('@')[0] || 'Tài khoản' : 'Đăng nhập'}
+          </span>
+          {user && (
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                user.emailVerified ? 'bg-emerald-500' : 'bg-amber-500'
+              }`}
+            />
+          )}
         </button>
 
         <button

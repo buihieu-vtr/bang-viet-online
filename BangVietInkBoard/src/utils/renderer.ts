@@ -90,7 +90,7 @@ function getBoardTexturePattern(
   return pattern;
 }
 
-function drawRealisticBoardSurface(
+export function drawRealisticBoardSurface(
   ctx: CanvasRenderingContext2D,
   template: BoardPage['template'],
   x: number,
@@ -118,7 +118,7 @@ function drawRealisticBoardSurface(
   }
 }
 
-function drawAluminumBoardFrame(
+export function drawAluminumBoardFrame(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,

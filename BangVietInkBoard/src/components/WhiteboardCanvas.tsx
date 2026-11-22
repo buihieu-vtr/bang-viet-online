@@ -12,6 +12,7 @@ import {
   BoardPage,
   EraserMode,
   ImageItem,
+  PAGE_DIMENSIONS,
   PenSlot,
   Point,
   RulerState,
@@ -40,6 +41,10 @@ import {
   uid,
 } from '../utils/geometry';
 import {
+  drawAluminumBoardFrame,
+  drawRealisticBoardSurface,
+  drawTemplatePattern,
+  getTemplateColors,
   isDarkBoardTemplate,
   LaserPoint,
   renderElement,
@@ -51,6 +56,7 @@ import {
 
 interface WhiteboardCanvasProps {
   page: BoardPage;
+  pages: BoardPage[];
   viewport: ViewportState;
   onViewportChange: React.Dispatch<React.SetStateAction<ViewportState>>;
   activeTool: ToolType;
@@ -69,28 +75,79 @@ interface WhiteboardCanvasProps {
   onRulerChange: React.Dispatch<React.SetStateAction<RulerState>>;
   selectedIds: string[];
   onSelectedIdsChange: (ids: string[]) => void;
-  onCommitElements: (nextElements: BoardElement[]) => void;
+  onCommitPageElements: (pageId: string, nextElements: BoardElement[]) => void;
+  onSelectPage: (pageId: string) => void;
+  scrollToPageRequest: { pageId: string; seq: number } | null;
   onSelectTool: (tool: ToolType) => void;
 }
+
+interface PageLayout {
+  page: BoardPage;
+  index: number;
+  x: number;
+  topY: number;
+  width: number;
+  height: number;
+}
+
+const PAGE_GAP = 48;
 
 type InteractionMode =
   | { type: 'none' }
   | { type: 'pan'; startScreenX: number; startScreenY: number; origOffsetX: number; origOffsetY: number }
-  | { type: 'draw'; stroke: StrokeItem; rulerSnapped: boolean }
-  | { type: 'shape'; shape: ShapeItem; startX: number; startY: number }
-  | { type: 'eraseStroke' }
-  | { type: 'erasePartial' }
-  | { type: 'lasso'; points: { x: number; y: number }[] }
-  | { type: 'boxSelect'; startX: number; startY: number; curX: number; curY: number }
-  | { type: 'moveSelected'; lastX: number; lastY: number; snapshot: BoardElement[] }
+  | {
+      type: 'draw';
+      pageId: string;
+      offsetX: number;
+      offsetY: number;
+      stroke: StrokeItem;
+      rulerSnapped: boolean;
+    }
+  | {
+      type: 'shape';
+      pageId: string;
+      offsetX: number;
+      offsetY: number;
+      shape: ShapeItem;
+      startX: number;
+      startY: number;
+    }
+  | { type: 'eraseStroke'; pageId: string; offsetX: number; offsetY: number }
+  | { type: 'erasePartial'; pageId: string; offsetX: number; offsetY: number }
+  | { type: 'lasso'; pageId: string; offsetX: number; offsetY: number; points: { x: number; y: number }[] }
+  | {
+      type: 'boxSelect';
+      pageId: string;
+      offsetX: number;
+      offsetY: number;
+      startX: number;
+      startY: number;
+      curX: number;
+      curY: number;
+    }
+  | {
+      type: 'moveSelected';
+      pageId: string;
+      offsetX: number;
+      offsetY: number;
+      lastX: number;
+      lastY: number;
+      snapshot: BoardElement[];
+    }
   | {
       type: 'resizeSelected';
+      pageId: string;
+      offsetX: number;
+      offsetY: number;
       handle: 'nw' | 'ne' | 'sw' | 'se';
       origBox: BBox;
       snapshot: BoardElement[];
     }
   | {
       type: 'rotateSelected';
+      pageId: string;
+      offsetX: number;
+      offsetY: number;
       center: { x: number; y: number };
       startAngle: number;
       lastDelta: number;
@@ -99,6 +156,7 @@ type InteractionMode =
 
 export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
   page,
+  pages,
   viewport,
   onViewportChange,
   activeTool,
@@ -117,7 +175,9 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
   onRulerChange,
   selectedIds,
   onSelectedIdsChange,
-  onCommitElements,
+  onCommitPageElements,
+  onSelectPage,
+  scrollToPageRequest,
   onSelectTool,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -125,30 +185,173 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
   const imageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
   const laserPointsRef = useRef<LaserPoint[]>([]);
   const interactionRef = useRef<InteractionMode>({ type: 'none' });
-  const [liveElements, setLiveElements] = useState<BoardElement[] | null>(null);
-  const [liveDrawStroke, setLiveDrawStroke] = useState<StrokeItem | null>(null);
-  const [liveShape, setLiveShape] = useState<ShapeItem | null>(null);
-  const [lassoPoints, setLassoPoints] = useState<{ x: number; y: number }[] | null>(null);
-  const [boxSelectRect, setBoxSelectRect] = useState<BBox | null>(null);
+  const [liveElements, setLiveElements] = useState<{ pageId: string; items: BoardElement[] } | null>(null);
+  const [liveDrawStroke, setLiveDrawStroke] = useState<{ pageId: string; stroke: StrokeItem } | null>(null);
+  const [liveShape, setLiveShape] = useState<{ pageId: string; shape: ShapeItem } | null>(null);
+  const [lassoPoints, setLassoPoints] = useState<{ offsetX: number; offsetY: number; points: { x: number; y: number }[] } | null>(null);
+  const [boxSelectRect, setBoxSelectRect] = useState<{ offsetX: number; offsetY: number; box: BBox } | null>(null);
   const [spacePressed, setSpacePressed] = useState(false);
   const [cursorWorld, setCursorWorld] = useState<{ x: number; y: number } | null>(null);
-  const [editingTextId, setEditingTextId] = useState<string | null>(null);
+  const [editingText, setEditingText] = useState<{ pageId: string; elementId: string } | null>(null);
   const [editingDraft, setEditingDraft] = useState('');
   const [canvasSize, setCanvasSize] = useState({ width: 1200, height: 800 });
   const [renderTick, setRenderTick] = useState(0);
 
-  // Ruler dragging state
   const rulerDragRef = useRef<
     | null
     | { mode: 'move'; startX: number; startY: number; origX: number; origY: number }
     | { mode: 'rotate'; origAngle: number; startPointerAngle: number }
   >(null);
 
-  const displayedElements = liveElements ?? page.elements;
+  const scrollbarDragRef = useRef<{ startY: number; origOffsetY: number } | null>(null);
+  const wasPagedRef = useRef<boolean>(false);
+  const lastHandledScrollSeqRef = useRef<number>(0);
+
+  const isPagedMode = page.pageSize !== 'infinite';
+
+  // Compute stacked page layouts when in Paged / A4 / Slide mode
+  const { pageLayouts, totalStackHeight } = useMemo(() => {
+    if (!isPagedMode) {
+      return { pageLayouts: [] as PageLayout[], totalStackHeight: 0 };
+    }
+    const layouts: PageLayout[] = [];
+    let curY = 0;
+    pages.forEach((p, idx) => {
+      const dims =
+        p.pageSize === 'infinite'
+          ? { width: 1120, height: 1584 }
+          : PAGE_DIMENSIONS[p.pageSize];
+      layouts.push({
+        page: p,
+        index: idx,
+        x: -dims.width / 2,
+        topY: curY,
+        width: dims.width,
+        height: dims.height,
+      });
+      curY += dims.height + PAGE_GAP;
+    });
+    return {
+      pageLayouts: layouts,
+      totalStackHeight: Math.max(0, curY - PAGE_GAP),
+    };
+  }, [isPagedMode, pages]);
+
+  const activeLayout = useMemo(() => {
+    if (!isPagedMode) return null;
+    return pageLayouts.find((l) => l.page.id === page.id) || pageLayouts[0] || null;
+  }, [isPagedMode, pageLayouts, page.id]);
+
+  // Center & fit A4 page when entering Paged Mode
+  useEffect(() => {
+    if (isPagedMode && !wasPagedRef.current && activeLayout && canvasSize.width > 100) {
+      const availW = Math.max(320, canvasSize.width - 140);
+      const availH = Math.max(320, canvasSize.height - 64);
+      const fitZ = Math.min(availW / activeLayout.width, availH / activeLayout.height, 0.95);
+      const z = Math.max(0.32, Math.round(fitZ * 100) / 100);
+      onViewportChange({
+        zoom: z,
+        offsetX: canvasSize.width / 2,
+        offsetY: 28 - activeLayout.topY * z,
+      });
+    }
+    wasPagedRef.current = isPagedMode;
+  }, [isPagedMode, activeLayout, canvasSize.width, canvasSize.height, onViewportChange]);
+
+  // Scroll to requested page when user clicks a thumbnail in Mục lục or Prev/Next buttons
+  useEffect(() => {
+    if (!scrollToPageRequest || scrollToPageRequest.seq === lastHandledScrollSeqRef.current) {
+      return;
+    }
+    lastHandledScrollSeqRef.current = scrollToPageRequest.seq;
+    if (!isPagedMode) return;
+    const target = pageLayouts.find((l) => l.page.id === scrollToPageRequest.pageId);
+    if (!target) return;
+    onViewportChange((prev) => ({
+      ...prev,
+      offsetX: canvasSize.width / 2,
+      offsetY: 28 - target.topY * prev.zoom,
+    }));
+  }, [scrollToPageRequest, isPagedMode, pageLayouts, canvasSize.width, onViewportChange]);
+
+  const getScrollBounds = useCallback(
+    (zoom: number) => {
+      const maxOffsetY = Math.max(48, canvasSize.height * 0.2);
+      const minOffsetY = Math.min(
+        maxOffsetY,
+        canvasSize.height - 72 - totalStackHeight * zoom
+      );
+      return { minOffsetY, maxOffsetY };
+    },
+    [canvasSize.height, totalStackHeight]
+  );
+
+  const syncActivePageFromOffsetY = useCallback(
+    (nextOffsetY: number, zoom: number) => {
+      if (!isPagedMode || pageLayouts.length <= 1) return;
+      const worldCenterY = (canvasSize.height / 2 - nextOffsetY) / zoom;
+      let matched = pageLayouts[0];
+      let bestDist = Infinity;
+      for (const L of pageLayouts) {
+        if (worldCenterY >= L.topY - PAGE_GAP / 2 && worldCenterY <= L.topY + L.height + PAGE_GAP / 2) {
+          matched = L;
+          break;
+        }
+        const center = L.topY + L.height / 2;
+        const d = Math.abs(worldCenterY - center);
+        if (d < bestDist) {
+          bestDist = d;
+          matched = L;
+        }
+      }
+      if (matched && matched.page.id !== page.id) {
+        onSelectPage(matched.page.id);
+      }
+    },
+    [isPagedMode, pageLayouts, canvasSize.height, page.id, onSelectPage]
+  );
+
+  const findPageTargetAtWorld = useCallback(
+    (pt: { x: number; y: number }): { page: BoardPage; offsetX: number; offsetY: number } => {
+      if (!isPagedMode || pageLayouts.length === 0) {
+        return { page, offsetX: 0, offsetY: 0 };
+      }
+      const exact = pageLayouts.find(
+        (L) =>
+          pt.x >= L.x &&
+          pt.x <= L.x + L.width &&
+          pt.y >= L.topY &&
+          pt.y <= L.topY + L.height
+      );
+      if (exact) {
+        return { page: exact.page, offsetX: exact.x, offsetY: exact.topY };
+      }
+      const band = pageLayouts.find(
+        (L) =>
+          pt.y >= L.topY - PAGE_GAP / 2 && pt.y <= L.topY + L.height + PAGE_GAP / 2
+      );
+      if (band) {
+        return { page: band.page, offsetX: band.x, offsetY: band.topY };
+      }
+      const fallback =
+        pt.y < pageLayouts[0].topY
+          ? pageLayouts[0]
+          : pageLayouts[pageLayouts.length - 1];
+      return { page: fallback.page, offsetX: fallback.x, offsetY: fallback.topY };
+    },
+    [isPagedMode, pageLayouts, page]
+  );
+
+  const displayedActiveElements = useMemo(() => {
+    if (liveElements && liveElements.pageId === page.id) {
+      return liveElements.items;
+    }
+    return page.elements;
+  }, [liveElements, page.id, page.elements]);
 
   const selectedElements = useMemo(
-    () => displayedElements.filter((el) => selectedIds.includes(el.id)),
-    [displayedElements, selectedIds]
+    () => displayedActiveElements.filter((el) => selectedIds.includes(el.id)),
+    [displayedActiveElements, selectedIds]
   );
 
   const selectionBBox = useMemo(
@@ -156,7 +359,9 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
     [selectedElements]
   );
 
-  // Screen <-> World conversion
+  const activeOffsetX = activeLayout ? activeLayout.x : 0;
+  const activeOffsetY = activeLayout ? activeLayout.topY : 0;
+
   const screenToWorld = useCallback(
     (clientX: number, clientY: number) => {
       const rect = canvasRef.current?.getBoundingClientRect();
@@ -200,12 +405,12 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.length > 0) {
         e.preventDefault();
         const next = page.elements.filter((el) => !selectedIds.includes(el.id));
-        onCommitElements(next);
+        onCommitPageElements(page.id, next);
         onSelectedIdsChange([]);
       }
       if (e.key === 'Escape') {
         onSelectedIdsChange([]);
-        setEditingTextId(null);
+        setEditingText(null);
       }
     };
     const onKeyUp = (e: KeyboardEvent) => {
@@ -219,7 +424,7 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
     };
-  }, [page.elements, selectedIds, onCommitElements, onSelectedIdsChange]);
+  }, [page.id, page.elements, selectedIds, onCommitPageElements, onSelectedIdsChange]);
 
   // Main high-DPI Canvas render pass
   useEffect(() => {
@@ -240,44 +445,155 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
     ctx.save();
     ctx.scale(dpr, dpr);
 
-    renderPaperBackground(
-      ctx,
-      page,
-      viewport,
-      canvasSize.width,
-      canvasSize.height,
-      darkMode
-    );
+    if (!isPagedMode) {
+      // Single Infinite Board Mode
+      renderPaperBackground(
+        ctx,
+        page,
+        viewport,
+        canvasSize.width,
+        canvasSize.height,
+        darkMode
+      );
 
-    ctx.save();
-    ctx.translate(viewport.offsetX, viewport.offsetY);
-    ctx.scale(viewport.zoom, viewport.zoom);
-
-    for (const el of displayedElements) {
-      if (editingTextId === el.id) continue; // Rendered by inline editor
-      renderElement(ctx, el, imageCacheRef.current, () => {
-        setRenderTick((t) => t + 1);
-      });
-    }
-
-    if (liveDrawStroke) {
-      renderStroke(ctx, liveDrawStroke);
-    }
-    if (liveShape) {
-      renderShape(ctx, liveShape);
-    }
-
-    // Lasso overlay
-    if (lassoPoints && lassoPoints.length > 1) {
       ctx.save();
+      ctx.translate(viewport.offsetX, viewport.offsetY);
+      ctx.scale(viewport.zoom, viewport.zoom);
+
+      for (const el of displayedActiveElements) {
+        if (editingText && editingText.pageId === page.id && editingText.elementId === el.id) {
+          continue;
+        }
+        renderElement(ctx, el, imageCacheRef.current, () => {
+          setRenderTick((t) => t + 1);
+        });
+      }
+
+      if (liveDrawStroke && liveDrawStroke.pageId === page.id) {
+        renderStroke(ctx, liveDrawStroke.stroke);
+      }
+      if (liveShape && liveShape.pageId === page.id) {
+        renderShape(ctx, liveShape.shape);
+      }
+    } else {
+      // Multi-Page Vertical Scroll Mode (A4 Portrait / A4 Landscape / 16:9 Slide)
+      ctx.fillStyle = darkMode ? '#0F1115' : '#E5EAEF';
+      ctx.fillRect(0, 0, canvasSize.width, canvasSize.height);
+
+      ctx.save();
+      ctx.translate(viewport.offsetX, viewport.offsetY);
+      ctx.scale(viewport.zoom, viewport.zoom);
+
+      const viewTop = -viewport.offsetY / viewport.zoom;
+      const viewBottom = (canvasSize.height - viewport.offsetY) / viewport.zoom;
+
+      for (const L of pageLayouts) {
+        if (L.topY + L.height < viewTop - 250 || L.topY > viewBottom + 250) {
+          continue;
+        }
+
+        const tpl = getTemplateColors(L.page.template);
+
+        ctx.save();
+        ctx.translate(L.x, L.topY);
+
+        // Page card drop shadow
+        ctx.save();
+        ctx.shadowColor = 'rgba(15, 23, 42, 0.22)';
+        ctx.shadowBlur = 28 / viewport.zoom;
+        ctx.shadowOffsetY = 8 / viewport.zoom;
+        ctx.fillStyle = tpl.bg;
+        ctx.fillRect(0, 0, L.width, L.height);
+        ctx.restore();
+
+        // Realistic board/paper surface
+        drawRealisticBoardSurface(ctx, L.page.template, 0, 0, L.width, L.height);
+
+        // Clipped template pattern + elements + live strokes
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, 0, L.width, L.height);
+        ctx.clip();
+
+        drawTemplatePattern(
+          ctx,
+          L.page.template,
+          tpl.line,
+          L.page.gridSize || 32,
+          0,
+          0,
+          L.width,
+          L.height
+        );
+
+        const pageElements =
+          liveElements && liveElements.pageId === L.page.id
+            ? liveElements.items
+            : L.page.elements;
+
+        for (const el of pageElements) {
+          if (
+            editingText &&
+            editingText.pageId === L.page.id &&
+            editingText.elementId === el.id
+          ) {
+            continue;
+          }
+          renderElement(ctx, el, imageCacheRef.current, () => {
+            setRenderTick((t) => t + 1);
+          });
+        }
+
+        if (liveDrawStroke && liveDrawStroke.pageId === L.page.id) {
+          renderStroke(ctx, liveDrawStroke.stroke);
+        }
+        if (liveShape && liveShape.pageId === L.page.id) {
+          renderShape(ctx, liveShape.shape);
+        }
+        ctx.restore();
+
+        // Page frame / active highlight border
+        if (L.page.pageSize === 'slide16x9') {
+          drawAluminumBoardFrame(
+            ctx,
+            0,
+            0,
+            L.width,
+            L.height,
+            isDarkBoardTemplate(L.page.template),
+            viewport.zoom
+          );
+        } else {
+          const isActivePage = L.page.id === page.id;
+          ctx.strokeStyle = isActivePage
+            ? 'rgba(37, 99, 235, 0.55)'
+            : 'rgba(15, 23, 42, 0.14)';
+          ctx.lineWidth = (isActivePage ? 2 : 1) / viewport.zoom;
+          ctx.strokeRect(0, 0, L.width, L.height);
+        }
+
+        // Subtle Page Number Label above top-left
+        ctx.fillStyle = darkMode ? 'rgba(226, 232, 240, 0.7)' : 'rgba(71, 85, 105, 0.75)';
+        ctx.font = `600 ${Math.max(11, Math.round(13 / viewport.zoom))}px "DM Sans", sans-serif`;
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(`Trang ${L.index + 1}`, 4, -8 / viewport.zoom);
+
+        ctx.restore();
+      }
+    }
+
+    // Lasso overlay (stored in page-local coords + offset)
+    if (lassoPoints && lassoPoints.points.length > 1) {
+      ctx.save();
+      ctx.translate(lassoPoints.offsetX, lassoPoints.offsetY);
       ctx.strokeStyle = '#2563EB';
       ctx.fillStyle = 'rgba(37, 99, 235, 0.08)';
       ctx.lineWidth = 1.5 / viewport.zoom;
       ctx.setLineDash([6 / viewport.zoom, 4 / viewport.zoom]);
       ctx.beginPath();
-      ctx.moveTo(lassoPoints[0].x, lassoPoints[0].y);
-      for (let i = 1; i < lassoPoints.length; i++) {
-        ctx.lineTo(lassoPoints[i].x, lassoPoints[i].y);
+      ctx.moveTo(lassoPoints.points[0].x, lassoPoints.points[0].y);
+      for (let i = 1; i < lassoPoints.points.length; i++) {
+        ctx.lineTo(lassoPoints.points[i].x, lassoPoints.points[i].y);
       }
       ctx.closePath();
       ctx.fill();
@@ -288,25 +604,26 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
     // Box select overlay
     if (boxSelectRect) {
       ctx.save();
+      ctx.translate(boxSelectRect.offsetX, boxSelectRect.offsetY);
       ctx.strokeStyle = '#2563EB';
       ctx.fillStyle = 'rgba(37, 99, 235, 0.08)';
       ctx.lineWidth = 1.5 / viewport.zoom;
       ctx.strokeRect(
-        boxSelectRect.x,
-        boxSelectRect.y,
-        boxSelectRect.width,
-        boxSelectRect.height
+        boxSelectRect.box.x,
+        boxSelectRect.box.y,
+        boxSelectRect.box.width,
+        boxSelectRect.box.height
       );
       ctx.fillRect(
-        boxSelectRect.x,
-        boxSelectRect.y,
-        boxSelectRect.width,
-        boxSelectRect.height
+        boxSelectRect.box.x,
+        boxSelectRect.box.y,
+        boxSelectRect.box.width,
+        boxSelectRect.box.height
       );
       ctx.restore();
     }
 
-    // Eraser cursor ring
+    // Eraser cursor ring (world space)
     if (activeTool === 'eraser' && cursorWorld) {
       ctx.save();
       ctx.strokeStyle = eraserMode === 'stroke' ? '#EF4444' : '#3B82F6';
@@ -323,7 +640,7 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
       ctx.restore();
     }
 
-    // Laser pointer trail
+    // Laser pointer trail (world space)
     if (laserPointsRef.current.length > 0) {
       renderLaserTrail(ctx, laserPointsRef.current, performance.now());
     }
@@ -331,11 +648,14 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
     ctx.restore();
     ctx.restore();
   }, [
+    isPagedMode,
     page,
+    pageLayouts,
     viewport,
     canvasSize,
     darkMode,
-    displayedElements,
+    displayedActiveElements,
+    liveElements,
     liveDrawStroke,
     liveShape,
     lassoPoints,
@@ -344,7 +664,7 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
     eraserMode,
     eraserSize,
     cursorWorld,
-    editingTextId,
+    editingText,
     renderTick,
   ]);
 
@@ -368,13 +688,28 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
     return () => cancelAnimationFrame(rafId);
   });
 
-  // Wheel zoom / pan
+  // Wheel zoom / vertical scroll in Paged Mode
   const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
     e.preventDefault();
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
     const sx = e.clientX - rect.left;
     const sy = e.clientY - rect.top;
+
+    if (isPagedMode && !e.ctrlKey && !e.metaKey) {
+      onViewportChange((prev) => {
+        const { minOffsetY, maxOffsetY } = getScrollBounds(prev.zoom);
+        const nextOffsetY = Math.min(maxOffsetY, Math.max(minOffsetY, prev.offsetY - e.deltaY));
+        const nextOffsetX = prev.offsetX - e.deltaX;
+        syncActivePageFromOffsetY(nextOffsetY, prev.zoom);
+        return {
+          ...prev,
+          offsetX: nextOffsetX,
+          offsetY: nextOffsetY,
+        };
+      });
+      return;
+    }
 
     if (e.ctrlKey || e.metaKey || Math.abs(e.deltaY) > 0) {
       const factor = e.deltaY < 0 ? 1.09 : 0.91;
@@ -392,30 +727,33 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
   };
 
   const commitInlineText = () => {
-    if (!editingTextId) return;
-    const target = page.elements.find((e) => e.id === editingTextId);
+    if (!editingText) return;
+    const targetPage = pages.find((p) => p.id === editingText.pageId) || page;
+    const target = targetPage.elements.find((e) => e.id === editingText.elementId);
     if (target && (target.type === 'text' || target.type === 'sticky')) {
       const trimmed = editingDraft.trim();
       if (target.type === 'text' && !trimmed) {
-        onCommitElements(page.elements.filter((e) => e.id !== editingTextId));
+        onCommitPageElements(
+          targetPage.id,
+          targetPage.elements.filter((e) => e.id !== editingText.elementId)
+        );
       } else {
-        onCommitElements(
-          page.elements.map((e) =>
-            e.id === editingTextId ? { ...e, text: editingDraft } : e
+        onCommitPageElements(
+          targetPage.id,
+          targetPage.elements.map((e) =>
+            e.id === editingText.elementId ? { ...e, text: editingDraft } : e
           )
         );
       }
     }
-    setEditingTextId(null);
+    setEditingText(null);
   };
 
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    // If editing text, commit it first
-    if (editingTextId) {
+    if (editingText) {
       commitInlineText();
     }
 
-    // Palm Rejection: if Stylus-Only is enabled and pointer is finger touch, allow panning instead of drawing
     const isPalmTouch = stylusOnly && e.pointerType === 'touch';
 
     const canvas = canvasRef.current;
@@ -426,7 +764,6 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
     const pt = screenToWorld(e.clientX, e.clientY);
     setCursorWorld(pt);
 
-    // Middle mouse, Spacebar, Pan tool, or finger in Stylus-Only mode => Pan
     if (e.button === 1 || spacePressed || activeTool === 'pan' || isPalmTouch) {
       interactionRef.current = {
         type: 'pan',
@@ -440,16 +777,27 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
 
     if (e.button !== 0) return;
 
-    // Laser Pointer
     if (activeTool === 'laser') {
       laserPointsRef.current.push({ x: pt.x, y: pt.y, t: performance.now() });
       setRenderTick((t) => t + 1);
       return;
     }
 
+    const target = findPageTargetAtWorld(pt);
+    const targetPage = target.page;
+    const offX = target.offsetX;
+    const offY = target.offsetY;
+    const localPt = { x: pt.x - offX, y: pt.y - offY };
+
+    if (targetPage.id !== page.id) {
+      onSelectPage(targetPage.id);
+    }
+
     // Pen / Pencil / Highlighter
     if (activeTool === 'pen' || activeTool === 'pencil' || activeTool === 'highlighter') {
       const snap = snapPointToRuler(pt.x, pt.y, ruler);
+      const localX = snap.x - offX;
+      const localY = snap.y - offY;
       const pressure = e.pointerType === 'pen' && e.pressure > 0 ? e.pressure : 0.5;
       const stroke: StrokeItem = {
         id: uid('stroke'),
@@ -458,10 +806,17 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
         color: activePenSlot.color,
         width: activePenSlot.width,
         opacity: activePenSlot.opacity,
-        points: [{ x: snap.x, y: snap.y, pressure, t: Date.now() }],
+        points: [{ x: localX, y: localY, pressure, t: Date.now() }],
       };
-      interactionRef.current = { type: 'draw', stroke, rulerSnapped: snap.snapped };
-      setLiveDrawStroke(stroke);
+      interactionRef.current = {
+        type: 'draw',
+        pageId: targetPage.id,
+        offsetX: offX,
+        offsetY: offY,
+        stroke,
+        rulerSnapped: snap.snapped,
+      };
+      setLiveDrawStroke({ pageId: targetPage.id, stroke });
       onSelectedIdsChange([]);
       return;
     }
@@ -470,24 +825,33 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
     if (activeTool === 'eraser') {
       onSelectedIdsChange([]);
       if (eraserMode === 'stroke') {
-        interactionRef.current = { type: 'eraseStroke' };
-        const filtered = page.elements.filter((el) => !hitTestElement(el, pt, 10));
-        if (filtered.length !== page.elements.length) {
-          setLiveElements(filtered);
-        } else {
-          setLiveElements([...page.elements]);
-        }
+        interactionRef.current = {
+          type: 'eraseStroke',
+          pageId: targetPage.id,
+          offsetX: offX,
+          offsetY: offY,
+        };
+        const filtered = targetPage.elements.filter((el) => !hitTestElement(el, localPt, 10));
+        setLiveElements({
+          pageId: targetPage.id,
+          items: filtered.length !== targetPage.elements.length ? filtered : [...targetPage.elements],
+        });
       } else {
-        interactionRef.current = { type: 'erasePartial' };
+        interactionRef.current = {
+          type: 'erasePartial',
+          pageId: targetPage.id,
+          offsetX: offX,
+          offsetY: offY,
+        };
         const next: BoardElement[] = [];
-        for (const el of page.elements) {
+        for (const el of targetPage.elements) {
           if (el.type === 'stroke') {
-            next.push(...eraseStrokePartial(el, pt, eraserSize / 2));
+            next.push(...eraseStrokePartial(el, localPt, eraserSize / 2));
           } else {
             next.push(el);
           }
         }
-        setLiveElements(next);
+        setLiveElements({ pageId: targetPage.id, items: next });
       }
       return;
     }
@@ -498,8 +862,8 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
         id: uid('shape'),
         type: 'shape',
         shapeType: activeShape,
-        x: pt.x,
-        y: pt.y,
+        x: localPt.x,
+        y: localPt.y,
         width: 1,
         height: 1,
         rotation: 0,
@@ -511,30 +875,37 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
         rows: 3,
         cols: 3,
       };
-      interactionRef.current = { type: 'shape', shape, startX: pt.x, startY: pt.y };
-      setLiveShape(shape);
+      interactionRef.current = {
+        type: 'shape',
+        pageId: targetPage.id,
+        offsetX: offX,
+        offsetY: offY,
+        shape,
+        startX: localPt.x,
+        startY: localPt.y,
+      };
+      setLiveShape({ pageId: targetPage.id, shape });
       onSelectedIdsChange([]);
       return;
     }
 
     // Text tool
     if (activeTool === 'text') {
-      // Check if clicked on existing text/sticky to edit
-      const hitText = [...page.elements]
+      const hitText = [...targetPage.elements]
         .reverse()
-        .find((el) => (el.type === 'text' || el.type === 'sticky') && hitTestElement(el, pt, 4));
+        .find((el) => (el.type === 'text' || el.type === 'sticky') && hitTestElement(el, localPt, 4));
       if (hitText && (hitText.type === 'text' || hitText.type === 'sticky')) {
-        setEditingTextId(hitText.id);
+        setEditingText({ pageId: targetPage.id, elementId: hitText.id });
         setEditingDraft(hitText.text);
         return;
       }
 
-      const isDarkPaper = isDarkBoardTemplate(page.template);
+      const isDarkPaper = isDarkBoardTemplate(targetPage.template);
       const newText: TextItem = {
         id: uid('text'),
         type: 'text',
-        x: pt.x,
-        y: pt.y,
+        x: localPt.x,
+        y: localPt.y,
         width: 260,
         height: 80,
         rotation: 0,
@@ -547,8 +918,8 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
         align: 'left',
         bgColor: 'transparent',
       };
-      onCommitElements([...page.elements, newText]);
-      setEditingTextId(newText.id);
+      onCommitPageElements(targetPage.id, [...targetPage.elements, newText]);
+      setEditingText({ pageId: targetPage.id, elementId: newText.id });
       setEditingDraft('');
       onSelectTool('select');
       onSelectedIdsChange([newText.id]);
@@ -557,32 +928,33 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
 
     // Select tool
     if (activeTool === 'select') {
-      // Check if clicking inside current selection bounding box
-      if (selectionBBox && selectedIds.length > 0) {
+      if (targetPage.id === page.id && selectionBBox && selectedIds.length > 0) {
         if (
-          pt.x >= selectionBBox.x &&
-          pt.x <= selectionBBox.x + selectionBBox.width &&
-          pt.y >= selectionBBox.y &&
-          pt.y <= selectionBBox.y + selectionBBox.height
+          localPt.x >= selectionBBox.x &&
+          localPt.x <= selectionBBox.x + selectionBBox.width &&
+          localPt.y >= selectionBBox.y &&
+          localPt.y <= selectionBBox.y + selectionBBox.height
         ) {
           interactionRef.current = {
             type: 'moveSelected',
-            lastX: pt.x,
-            lastY: pt.y,
-            snapshot: page.elements,
+            pageId: targetPage.id,
+            offsetX: offX,
+            offsetY: offY,
+            lastX: localPt.x,
+            lastY: localPt.y,
+            snapshot: targetPage.elements,
           };
-          setLiveElements(page.elements);
+          setLiveElements({ pageId: targetPage.id, items: targetPage.elements });
           return;
         }
       }
 
-      // Check direct hit on top-most element
-      const hit = [...page.elements]
+      const hit = [...targetPage.elements]
         .reverse()
-        .find((el) => hitTestElement(el, pt, 8 / viewport.zoom));
+        .find((el) => hitTestElement(el, localPt, 8 / viewport.zoom));
 
       if (hit) {
-        if (e.shiftKey) {
+        if (e.shiftKey && targetPage.id === page.id) {
           const exists = selectedIds.includes(hit.id);
           onSelectedIdsChange(
             exists ? selectedIds.filter((id) => id !== hit.id) : [...selectedIds, hit.id]
@@ -592,28 +964,43 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
         }
         interactionRef.current = {
           type: 'moveSelected',
-          lastX: pt.x,
-          lastY: pt.y,
-          snapshot: page.elements,
+          pageId: targetPage.id,
+          offsetX: offX,
+          offsetY: offY,
+          lastX: localPt.x,
+          lastY: localPt.y,
+          snapshot: targetPage.elements,
         };
-        setLiveElements(page.elements);
+        setLiveElements({ pageId: targetPage.id, items: targetPage.elements });
         return;
       }
 
-      // Otherwise start Lasso or Box select
       onSelectedIdsChange([]);
       if (selectMode === 'lasso') {
-        interactionRef.current = { type: 'lasso', points: [pt] };
-        setLassoPoints([pt]);
+        interactionRef.current = {
+          type: 'lasso',
+          pageId: targetPage.id,
+          offsetX: offX,
+          offsetY: offY,
+          points: [localPt],
+        };
+        setLassoPoints({ offsetX: offX, offsetY: offY, points: [localPt] });
       } else {
         interactionRef.current = {
           type: 'boxSelect',
-          startX: pt.x,
-          startY: pt.y,
-          curX: pt.x,
-          curY: pt.y,
+          pageId: targetPage.id,
+          offsetX: offX,
+          offsetY: offY,
+          startX: localPt.x,
+          startY: localPt.y,
+          curX: localPt.x,
+          curY: localPt.y,
         };
-        setBoxSelectRect({ x: pt.x, y: pt.y, width: 0, height: 0 });
+        setBoxSelectRect({
+          offsetX: offX,
+          offsetY: offY,
+          box: { x: localPt.x, y: localPt.y, width: 0, height: 0 },
+        });
       }
     }
   };
@@ -634,19 +1021,27 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
     if (mode.type === 'pan') {
       const dx = e.clientX - mode.startScreenX;
       const dy = e.clientY - mode.startScreenY;
-      onViewportChange((prev) => ({
-        ...prev,
-        offsetX: mode.origOffsetX + dx,
-        offsetY: mode.origOffsetY + dy,
-      }));
+      onViewportChange((prev) => {
+        const nextOffsetY = mode.origOffsetY + dy;
+        if (isPagedMode) {
+          syncActivePageFromOffsetY(nextOffsetY, prev.zoom);
+        }
+        return {
+          ...prev,
+          offsetX: mode.origOffsetX + dx,
+          offsetY: nextOffsetY,
+        };
+      });
       return;
     }
+
+    const localPt = { x: pt.x - mode.offsetX, y: pt.y - mode.offsetY };
 
     if (mode.type === 'draw') {
       const snap = snapPointToRuler(pt.x, pt.y, ruler);
       const nextPt: Point = {
-        x: snap.x,
-        y: snap.y,
+        x: snap.x - mode.offsetX,
+        y: snap.y - mode.offsetY,
         pressure: e.pointerType === 'pen' && e.pressure > 0 ? e.pressure : 0.5,
         t: Date.now(),
       };
@@ -658,14 +1053,14 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
           points: [...pts, nextPt],
         };
         mode.stroke = updated;
-        setLiveDrawStroke(updated);
+        setLiveDrawStroke({ pageId: mode.pageId, stroke: updated });
       }
       return;
     }
 
     if (mode.type === 'shape') {
-      let w = pt.x - mode.startX;
-      let h = pt.y - mode.startY;
+      let w = localPt.x - mode.startX;
+      let h = localPt.y - mode.startY;
       if (e.shiftKey) {
         const s = Math.max(Math.abs(w), Math.abs(h));
         w = w < 0 ? -s : s;
@@ -677,63 +1072,74 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
         height: h,
       };
       mode.shape = updated;
-      setLiveShape(updated);
+      setLiveShape({ pageId: mode.pageId, shape: updated });
       return;
     }
 
     if (mode.type === 'eraseStroke') {
-      setLiveElements((prev) =>
-        (prev ?? page.elements).filter((el) => !hitTestElement(el, pt, 10))
-      );
+      const targetPage = pages.find((p) => p.id === mode.pageId) || page;
+      setLiveElements((prev) => ({
+        pageId: mode.pageId,
+        items: (prev?.pageId === mode.pageId ? prev.items : targetPage.elements).filter(
+          (el) => !hitTestElement(el, localPt, 10)
+        ),
+      }));
       return;
     }
 
     if (mode.type === 'erasePartial') {
+      const targetPage = pages.find((p) => p.id === mode.pageId) || page;
       setLiveElements((prev) => {
-        const source = prev ?? page.elements;
+        const source = prev?.pageId === mode.pageId ? prev.items : targetPage.elements;
         const next: BoardElement[] = [];
         for (const el of source) {
           if (el.type === 'stroke') {
-            next.push(...eraseStrokePartial(el, pt, eraserSize / 2));
+            next.push(...eraseStrokePartial(el, localPt, eraserSize / 2));
           } else {
             next.push(el);
           }
         }
-        return next;
+        return { pageId: mode.pageId, items: next };
       });
       return;
     }
 
     if (mode.type === 'lasso') {
       const last = mode.points[mode.points.length - 1];
-      if (!last || dist(last, pt) >= 5) {
-        mode.points.push(pt);
-        setLassoPoints([...mode.points]);
+      if (!last || dist(last, localPt) >= 5) {
+        mode.points.push(localPt);
+        setLassoPoints({ offsetX: mode.offsetX, offsetY: mode.offsetY, points: [...mode.points] });
       }
       return;
     }
 
     if (mode.type === 'boxSelect') {
-      mode.curX = pt.x;
-      mode.curY = pt.y;
-      const x = Math.min(mode.startX, pt.x);
-      const y = Math.min(mode.startY, pt.y);
-      const width = Math.abs(pt.x - mode.startX);
-      const height = Math.abs(pt.y - mode.startY);
-      setBoxSelectRect({ x, y, width, height });
+      mode.curX = localPt.x;
+      mode.curY = localPt.y;
+      const x = Math.min(mode.startX, localPt.x);
+      const y = Math.min(mode.startY, localPt.y);
+      const width = Math.abs(localPt.x - mode.startX);
+      const height = Math.abs(localPt.y - mode.startY);
+      setBoxSelectRect({
+        offsetX: mode.offsetX,
+        offsetY: mode.offsetY,
+        box: { x, y, width, height },
+      });
       return;
     }
 
     if (mode.type === 'moveSelected') {
-      const dx = pt.x - mode.lastX;
-      const dy = pt.y - mode.lastY;
-      mode.lastX = pt.x;
-      mode.lastY = pt.y;
-      setLiveElements((prev) =>
-        (prev ?? page.elements).map((el) =>
+      const dx = localPt.x - mode.lastX;
+      const dy = localPt.y - mode.lastY;
+      mode.lastX = localPt.x;
+      mode.lastY = localPt.y;
+      const targetPage = pages.find((p) => p.id === mode.pageId) || page;
+      setLiveElements((prev) => ({
+        pageId: mode.pageId,
+        items: (prev?.pageId === mode.pageId ? prev.items : targetPage.elements).map((el) =>
           selectedIds.includes(el.id) ? translateElement(el, dx, dy) : el
-        )
-      );
+        ),
+      }));
       return;
     }
 
@@ -745,44 +1151,46 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
       let nh = origBox.height;
 
       if (handle === 'se') {
-        nw = Math.max(16, pt.x - origBox.x);
-        nh = Math.max(16, pt.y - origBox.y);
+        nw = Math.max(16, localPt.x - origBox.x);
+        nh = Math.max(16, localPt.y - origBox.y);
       } else if (handle === 'nw') {
-        nw = Math.max(16, origBox.x + origBox.width - pt.x);
-        nh = Math.max(16, origBox.y + origBox.height - pt.y);
+        nw = Math.max(16, origBox.x + origBox.width - localPt.x);
+        nh = Math.max(16, origBox.y + origBox.height - localPt.y);
         nx = origBox.x + origBox.width - nw;
         ny = origBox.y + origBox.height - nh;
       } else if (handle === 'ne') {
-        nw = Math.max(16, pt.x - origBox.x);
-        nh = Math.max(16, origBox.y + origBox.height - pt.y);
+        nw = Math.max(16, localPt.x - origBox.x);
+        nh = Math.max(16, origBox.y + origBox.height - localPt.y);
         ny = origBox.y + origBox.height - nh;
       } else if (handle === 'sw') {
-        nw = Math.max(16, origBox.x + origBox.width - pt.x);
-        nh = Math.max(16, pt.y - origBox.y);
+        nw = Math.max(16, origBox.x + origBox.width - localPt.x);
+        nh = Math.max(16, localPt.y - origBox.y);
         nx = origBox.x + origBox.width - nw;
       }
 
       const newBox: BBox = { x: nx, y: ny, width: nw, height: nh };
-      setLiveElements(
-        snapshot.map((el) =>
+      setLiveElements({
+        pageId: mode.pageId,
+        items: snapshot.map((el) =>
           selectedIds.includes(el.id) ? scaleElementInBox(el, origBox, newBox) : el
-        )
-      );
+        ),
+      });
       return;
     }
 
     if (mode.type === 'rotateSelected') {
       const curAngle =
-        (Math.atan2(pt.y - mode.center.y, pt.x - mode.center.x) * 180) / Math.PI;
+        (Math.atan2(localPt.y - mode.center.y, localPt.x - mode.center.x) * 180) / Math.PI;
       const delta = curAngle - mode.startAngle;
       mode.lastDelta = delta;
-      setLiveElements(
-        mode.snapshot.map((el) =>
+      setLiveElements({
+        pageId: mode.pageId,
+        items: mode.snapshot.map((el) =>
           selectedIds.includes(el.id)
             ? rotateElementAround(el, mode.center, delta)
             : el
-        )
-      );
+        ),
+      });
     }
   };
 
@@ -791,6 +1199,7 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
     interactionRef.current = { type: 'none' };
 
     if (mode.type === 'draw') {
+      const targetPage = pages.find((p) => p.id === mode.pageId) || page;
       let added: BoardElement = mode.stroke;
       if (
         inkToShape &&
@@ -803,31 +1212,33 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
         }
       }
       setLiveDrawStroke(null);
-      onCommitElements([...page.elements, added]);
+      onCommitPageElements(targetPage.id, [...targetPage.elements, added]);
       return;
     }
 
     if (mode.type === 'shape') {
+      const targetPage = pages.find((p) => p.id === mode.pageId) || page;
       setLiveShape(null);
       if (Math.hypot(mode.shape.width, mode.shape.height) >= 8) {
-        onCommitElements([...page.elements, mode.shape]);
+        onCommitPageElements(targetPage.id, [...targetPage.elements, mode.shape]);
       }
       return;
     }
 
     if (mode.type === 'eraseStroke' || mode.type === 'erasePartial') {
-      if (liveElements) {
-        onCommitElements(liveElements);
+      if (liveElements && liveElements.pageId === mode.pageId) {
+        onCommitPageElements(mode.pageId, liveElements.items);
       }
       setLiveElements(null);
       return;
     }
 
     if (mode.type === 'lasso') {
+      const targetPage = pages.find((p) => p.id === mode.pageId) || page;
       const poly = mode.points;
       setLassoPoints(null);
       if (poly.length >= 3) {
-        const matched = page.elements
+        const matched = targetPage.elements
           .filter((el) => {
             if (el.type === 'stroke') {
               return el.points.some((p) => pointInPolygon(p, poly));
@@ -844,6 +1255,7 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
     }
 
     if (mode.type === 'boxSelect') {
+      const targetPage = pages.find((p) => p.id === mode.pageId) || page;
       const x = Math.min(mode.startX, mode.curX);
       const y = Math.min(mode.startY, mode.curY);
       const width = Math.abs(mode.curX - mode.startX);
@@ -851,7 +1263,7 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
       setBoxSelectRect(null);
       if (width > 4 || height > 4) {
         const box = { x, y, width, height };
-        const matched = page.elements
+        const matched = targetPage.elements
           .filter((el) => bboxesIntersect(getElementBBox(el), box))
           .map((e) => e.id);
         onSelectedIdsChange(matched);
@@ -864,8 +1276,8 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
       mode.type === 'resizeSelected' ||
       mode.type === 'rotateSelected'
     ) {
-      if (liveElements) {
-        onCommitElements(liveElements);
+      if (liveElements && liveElements.pageId === mode.pageId) {
+        onCommitPageElements(mode.pageId, liveElements.items);
       }
       setLiveElements(null);
     }
@@ -874,17 +1286,20 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
   // Double click to edit Text or Sticky note
   const handleDoubleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const pt = screenToWorld(e.clientX, e.clientY);
-    const hit = [...page.elements]
+    const target = findPageTargetAtWorld(pt);
+    const localPt = { x: pt.x - target.offsetX, y: pt.y - target.offsetY };
+    const hit = [...target.page.elements]
       .reverse()
-      .find((el) => (el.type === 'text' || el.type === 'sticky') && hitTestElement(el, pt, 6));
+      .find((el) => (el.type === 'text' || el.type === 'sticky') && hitTestElement(el, localPt, 6));
     if (hit && (hit.type === 'text' || hit.type === 'sticky')) {
-      setEditingTextId(hit.id);
+      if (target.page.id !== page.id) onSelectPage(target.page.id);
+      setEditingText({ pageId: target.page.id, elementId: hit.id });
       setEditingDraft(hit.text);
       onSelectedIdsChange([hit.id]);
     }
   };
 
-  // Paste image from clipboard directly onto board!
+  // Paste image from clipboard directly onto active page
   useEffect(() => {
     const handlePaste = (e: ClipboardEvent) => {
       const items = e.clipboardData?.items;
@@ -902,8 +1317,8 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
               const scale = img.width > maxW ? maxW / img.width : 1;
               const w = img.width * scale;
               const h = img.height * scale;
-              const centerW = (canvasSize.width / 2 - viewport.offsetX) / viewport.zoom;
-              const centerH = (canvasSize.height / 2 - viewport.offsetY) / viewport.zoom;
+              const centerW = (canvasSize.width / 2 - viewport.offsetX) / viewport.zoom - activeOffsetX;
+              const centerH = (canvasSize.height / 2 - viewport.offsetY) / viewport.zoom - activeOffsetY;
               const newImg: ImageItem = {
                 id: uid('img'),
                 type: 'image',
@@ -915,7 +1330,7 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
                 src,
                 opacity: 1,
               };
-              onCommitElements([...page.elements, newImg]);
+              onCommitPageElements(page.id, [...page.elements, newImg]);
               onSelectedIdsChange([newImg.id]);
               onSelectTool('select');
             };
@@ -927,7 +1342,17 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
     };
     window.addEventListener('paste', handlePaste);
     return () => window.removeEventListener('paste', handlePaste);
-  }, [page.elements, canvasSize, viewport, onCommitElements, onSelectedIdsChange, onSelectTool]);
+  }, [
+    page.id,
+    page.elements,
+    canvasSize,
+    viewport,
+    activeOffsetX,
+    activeOffsetY,
+    onCommitPageElements,
+    onSelectedIdsChange,
+    onSelectTool,
+  ]);
 
   // Ruler screen transform & interaction
   const rulerScreenX = ruler.x * viewport.zoom + viewport.offsetX;
@@ -980,10 +1405,8 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
       const curAngle =
         (Math.atan2(sy - rulerScreenY, sx - rulerScreenX) * 180) / Math.PI;
       let nextAngle = drag.origAngle + (curAngle - drag.startPointerAngle);
-      // Normalize -180..180
       nextAngle = ((nextAngle + 180) % 360) - 180;
       if (nextAngle < -180) nextAngle += 360;
-      // Magnetic 15 deg snap unless holding Shift
       if (!e.shiftKey) {
         const nearest15 = Math.round(nextAngle / 15) * 15;
         if (Math.abs(nextAngle - nearest15) < 2.8) {
@@ -999,18 +1422,21 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
     rulerDragRef.current = null;
   };
 
-  // Selection action handlers
+  // Selection action handlers (on active page)
   const duplicateSelected = () => {
     const clones = selectedElements.map((el) => ({
       ...translateElement(el, 28, 28),
       id: uid(el.type),
     }));
-    onCommitElements([...page.elements, ...clones]);
+    onCommitPageElements(page.id, [...page.elements, ...clones]);
     onSelectedIdsChange(clones.map((c) => c.id));
   };
 
   const deleteSelected = () => {
-    onCommitElements(page.elements.filter((el) => !selectedIds.includes(el.id)));
+    onCommitPageElements(
+      page.id,
+      page.elements.filter((el) => !selectedIds.includes(el.id))
+    );
     onSelectedIdsChange([]);
   };
 
@@ -1018,15 +1444,36 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
     const selected = page.elements.filter((el) => selectedIds.includes(el.id));
     const others = page.elements.filter((el) => !selectedIds.includes(el.id));
     const next = dir === 'front' ? [...others, ...selected] : [...selected, ...others];
-    onCommitElements(next);
+    onCommitPageElements(page.id, next);
   };
 
   // Inline text element being edited
-  const editingEl = editingTextId
-    ? page.elements.find((e) => e.id === editingTextId)
-    : null;
+  const editingPage = editingText ? pages.find((p) => p.id === editingText.pageId) || page : null;
+  const editingEl =
+    editingText && editingPage
+      ? editingPage.elements.find((e) => e.id === editingText.elementId) || null
+      : null;
+  const editingLayout =
+    isPagedMode && editingPage
+      ? pageLayouts.find((l) => l.page.id === editingPage.id) || null
+      : null;
+  const editingOffX = editingLayout ? editingLayout.x : 0;
+  const editingOffY = editingLayout ? editingLayout.topY : 0;
 
-  // Cursor style
+  // Vertical scrollbar calculations for Paged Mode
+  const scrollBounds = isPagedMode ? getScrollBounds(viewport.zoom) : null;
+  const scrollRange = scrollBounds ? Math.max(1, scrollBounds.maxOffsetY - scrollBounds.minOffsetY) : 1;
+  const scrollProgress = scrollBounds
+    ? Math.min(1, Math.max(0, (scrollBounds.maxOffsetY - viewport.offsetY) / scrollRange))
+    : 0;
+  const thumbRatio =
+    isPagedMode && totalStackHeight > 0
+      ? Math.min(0.85, Math.max(0.08, canvasSize.height / (totalStackHeight * viewport.zoom + 120)))
+      : 0.2;
+  const trackH = Math.max(100, canvasSize.height - 24);
+  const thumbH = Math.max(36, trackH * thumbRatio);
+  const thumbTop = scrollProgress * (trackH - thumbH);
+
   let cursorClass = 'cursor-crosshair';
   if (spacePressed || activeTool === 'pan') cursorClass = 'cursor-grab active:cursor-grabbing';
   else if (activeTool === 'select') cursorClass = 'cursor-default';
@@ -1049,18 +1496,58 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
         className={`block w-full h-full touch-none-canvas ${cursorClass}`}
       />
 
+      {/* Right-Edge Interactive Scrollbar for Multi-Page A4 / Slide Mode */}
+      {isPagedMode && pages.length >= 1 && (
+        <div
+          className="absolute right-1.5 top-3 bottom-3 w-2.5 z-20 rounded-full bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 transition-colors cursor-pointer"
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+            scrollbarDragRef.current = {
+              startY: e.clientY,
+              origOffsetY: viewport.offsetY,
+            };
+          }}
+          onPointerMove={(e) => {
+            const drag = scrollbarDragRef.current;
+            if (!drag || !scrollBounds) return;
+            e.stopPropagation();
+            const dy = e.clientY - drag.startY;
+            const scrollableTrack = Math.max(1, trackH - thumbH);
+            const deltaOffset = -(dy / scrollableTrack) * scrollRange;
+            const nextY = Math.min(
+              scrollBounds.maxOffsetY,
+              Math.max(scrollBounds.minOffsetY, drag.origOffsetY + deltaOffset)
+            );
+            onViewportChange((prev) => ({ ...prev, offsetY: nextY }));
+            syncActivePageFromOffsetY(nextY, viewport.zoom);
+          }}
+          onPointerUp={(e) => {
+            e.stopPropagation();
+            scrollbarDragRef.current = null;
+          }}
+          onPointerCancel={() => {
+            scrollbarDragRef.current = null;
+          }}
+        >
+          <div
+            style={{ height: thumbH, transform: `translateY(${thumbTop}px)` }}
+            className="w-full rounded-full bg-slate-400/75 dark:bg-slate-500/75 hover:bg-slate-500 dark:hover:bg-slate-400 transition-colors"
+          />
+        </div>
+      )}
+
       {/* Interactive Selection Overlay Handles & Floating Action Bar */}
-      {activeTool === 'select' && selectionBBox && !editingTextId && (
+      {activeTool === 'select' && selectionBBox && !editingText && (
         <div
           className="pointer-events-none absolute border-[1.5px] border-blue-600"
           style={{
-            left: selectionBBox.x * viewport.zoom + viewport.offsetX,
-            top: selectionBBox.y * viewport.zoom + viewport.offsetY,
+            left: (selectionBBox.x + activeOffsetX) * viewport.zoom + viewport.offsetX,
+            top: (selectionBBox.y + activeOffsetY) * viewport.zoom + viewport.offsetY,
             width: selectionBBox.width * viewport.zoom,
             height: selectionBBox.height * viewport.zoom,
           }}
         >
-          {/* Floating quick actions toolbar above selection */}
           <div className="pointer-events-auto absolute -top-11 left-1/2 -translate-x-1/2 flex items-center gap-0.5 px-1.5 py-1 rounded-xl bg-white dark:bg-[#1B1F27] border border-slate-200 dark:border-slate-700 shadow-lg">
             <button
               type="button"
@@ -1097,7 +1584,6 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
             </button>
           </div>
 
-          {/* Rotation Handle */}
           <div
             onPointerDown={(e) => {
               e.stopPropagation();
@@ -1106,16 +1592,20 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
                 y: selectionBBox.y + selectionBBox.height / 2,
               };
               const pt = screenToWorld(e.clientX, e.clientY);
+              const localPt = { x: pt.x - activeOffsetX, y: pt.y - activeOffsetY };
               const startAngle =
-                (Math.atan2(pt.y - center.y, pt.x - center.x) * 180) / Math.PI;
+                (Math.atan2(localPt.y - center.y, localPt.x - center.x) * 180) / Math.PI;
               interactionRef.current = {
                 type: 'rotateSelected',
+                pageId: page.id,
+                offsetX: activeOffsetX,
+                offsetY: activeOffsetY,
                 center,
                 startAngle,
                 lastDelta: 0,
                 snapshot: page.elements,
               };
-              setLiveElements(page.elements);
+              setLiveElements({ pageId: page.id, items: page.elements });
               canvasRef.current?.setPointerCapture(e.pointerId);
             }}
             title="Xoay đối tượng"
@@ -1124,7 +1614,6 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
             <RotateCw className="w-2.5 h-2.5 text-blue-600" />
           </div>
 
-          {/* 4 Corner Resize Handles */}
           {(['nw', 'ne', 'sw', 'se'] as const).map((handle) => {
             const posClass =
               handle === 'nw'
@@ -1142,11 +1631,14 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
                   e.stopPropagation();
                   interactionRef.current = {
                     type: 'resizeSelected',
+                    pageId: page.id,
+                    offsetX: activeOffsetX,
+                    offsetY: activeOffsetY,
                     handle,
                     origBox: selectionBBox,
                     snapshot: page.elements,
                   };
-                  setLiveElements(page.elements);
+                  setLiveElements({ pageId: page.id, items: page.elements });
                   canvasRef.current?.setPointerCapture(e.pointerId);
                 }}
                 className={`pointer-events-auto absolute w-3 h-3 rounded-xs bg-white border-2 border-blue-600 shadow-xs ${posClass}`}
@@ -1170,8 +1662,8 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
           }}
           placeholder="Nhập nội dung..."
           style={{
-            left: editingEl.x * viewport.zoom + viewport.offsetX,
-            top: editingEl.y * viewport.zoom + viewport.offsetY,
+            left: (editingEl.x + editingOffX) * viewport.zoom + viewport.offsetX,
+            top: (editingEl.y + editingOffY) * viewport.zoom + viewport.offsetY,
             width: Math.max(160, editingEl.width * viewport.zoom),
             height: Math.max(80, editingEl.height * viewport.zoom),
             fontSize: `${editingEl.fontSize * viewport.zoom}px`,
@@ -1181,7 +1673,7 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
                 ? editingEl.noteColor
                 : editingEl.bgColor !== 'transparent'
                   ? editingEl.bgColor
-                  : isDarkBoardTemplate(page.template)
+                  : isDarkBoardTemplate(editingPage?.template || page.template)
                     ? 'rgba(20, 56, 40, 0.92)'
                     : 'rgba(255,255,255,0.9)',
           }}
@@ -1189,7 +1681,7 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
         />
       )}
 
-      {/* Interactive On-Canvas Magnetic Ruler (Signature Scrble Ink Feature) */}
+      {/* Interactive On-Canvas Magnetic Ruler */}
       {ruler.visible && (
         <div
           onPointerDown={startRulerMove}
@@ -1213,7 +1705,6 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
           }}
           className="absolute z-20 rounded-md bg-slate-100/80 dark:bg-slate-800/80 backdrop-blur-xs border border-slate-400/70 dark:border-slate-500/70 shadow-lg cursor-move select-none flex items-center justify-center"
         >
-          {/* Top & Bottom Ruler Tick Marks */}
           <div className="absolute inset-x-0 top-0 h-3 overflow-hidden flex">
             {Array.from({ length: 60 }).map((_, i) => (
               <div
@@ -1233,12 +1724,10 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
             ))}
           </div>
 
-          {/* Center Angle Readout */}
           <div className="px-2.5 py-0.5 rounded-md bg-white/90 dark:bg-slate-900/90 border border-slate-300 dark:border-slate-700 text-xs font-mono-tabular font-semibold text-slate-800 dark:text-slate-100 shadow-xs">
             {Math.round(ruler.angleDeg)}°
           </div>
 
-          {/* Right Rotation Handle */}
           <div
             onPointerDown={startRulerRotate}
             title="Kéo để xoay góc thước (giữ Shift để chỉnh từng 1°)"

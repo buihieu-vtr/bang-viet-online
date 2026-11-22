@@ -34,27 +34,34 @@ function openDB(): Promise<IDBDatabase> {
   });
 }
 
-export async function listNotebooks(): Promise<NotebookDocument[]> {
+export async function listNotebooks(ownerScope = 'guest'): Promise<NotebookDocument[]> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NOTEBOOKS, 'readonly');
     const store = tx.objectStore(STORE_NOTEBOOKS);
     const req = store.getAll();
     req.onsuccess = () => {
-      const list = (req.result as NotebookDocument[]).sort(
-        (a, b) => b.updatedAt - a.updatedAt
-      );
+      const list = (req.result as NotebookDocument[])
+        .filter((n) => (n.ownerId || 'guest') === ownerScope)
+        .sort((a, b) => b.updatedAt - a.updatedAt);
       resolve(list);
     };
     req.onerror = () => reject(req.error);
   });
 }
 
-export async function saveNotebookToDB(doc: NotebookDocument): Promise<void> {
+export async function saveNotebookToDB(
+  doc: NotebookDocument,
+  ownerScope = 'guest'
+): Promise<void> {
   const db = await openDB();
+  const scopedDoc: NotebookDocument = {
+    ...doc,
+    ownerId: doc.ownerId || ownerScope,
+  };
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NOTEBOOKS, 'readwrite');
-    tx.objectStore(STORE_NOTEBOOKS).put(doc);
+    tx.objectStore(STORE_NOTEBOOKS).put(scopedDoc);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
@@ -70,24 +77,65 @@ export async function deleteNotebookFromDB(id: string): Promise<void> {
   });
 }
 
-export async function getLastActiveNotebookId(): Promise<string | null> {
+export async function getLastActiveNotebookId(ownerScope = 'guest'): Promise<string | null> {
   const db = await openDB();
   return new Promise((resolve) => {
     const tx = db.transaction(STORE_META, 'readonly');
-    const req = tx.objectStore(STORE_META).get('lastActiveId');
+    const req = tx.objectStore(STORE_META).get(`lastActiveId_${ownerScope}`);
     req.onsuccess = () => resolve(req.result?.value ?? null);
     req.onerror = () => resolve(null);
   });
 }
 
-export async function setLastActiveNotebookId(id: string): Promise<void> {
+export async function setLastActiveNotebookId(
+  id: string,
+  ownerScope = 'guest'
+): Promise<void> {
   const db = await openDB();
   return new Promise((resolve) => {
     const tx = db.transaction(STORE_META, 'readwrite');
-    tx.objectStore(STORE_META).put({ key: 'lastActiveId', value: id });
+    tx.objectStore(STORE_META).put({ key: `lastActiveId_${ownerScope}`, value: id });
     tx.oncomplete = () => resolve();
     tx.onerror = () => resolve();
   });
+}
+
+const DEFAULT_CUSTOM_COLORS = [
+  '#274C43',
+  '#FDE047',
+  '#FFFFFF',
+  '#0F172A',
+  '#2563EB',
+  '#DC2626',
+  '#16A34A',
+  '#9333EA',
+  '#EA580C',
+  '#EC4899',
+];
+
+export function loadLocalCustomColors(ownerScope = 'guest'): string[] {
+  try {
+    const raw = localStorage.getItem(`inkboard_custom_colors_${ownerScope}`);
+    if (!raw) return DEFAULT_CUSTOM_COLORS;
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return parsed.filter((c): c is string => typeof c === 'string').slice(0, 24);
+    }
+  } catch {
+    // Ignore
+  }
+  return DEFAULT_CUSTOM_COLORS;
+}
+
+export function saveLocalCustomColors(colors: string[], ownerScope = 'guest'): void {
+  try {
+    localStorage.setItem(
+      `inkboard_custom_colors_${ownerScope}`,
+      JSON.stringify(colors.slice(0, 24))
+    );
+  } catch {
+    // Ignore
+  }
 }
 
 export function slugifyVietnamese(input: string): string {
@@ -120,11 +168,14 @@ export function createBlankPage(
 export function createBlankNotebook(
   title = 'Bảng viết mới',
   template: BoardPage['template'] = 'blank',
-  slug?: string
+  slug?: string,
+  pageSize: BoardPage['pageSize'] = 'infinite',
+  ownerId?: string
 ): NotebookDocument {
-  const page = createBlankPage('Trang 1', template, 'infinite');
+  const page = createBlankPage('Trang 1', template, pageSize);
   return {
     id: uid('nb'),
+    ownerId,
     slug,
     title,
     createdAt: Date.now(),
