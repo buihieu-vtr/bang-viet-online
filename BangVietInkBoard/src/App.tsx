@@ -112,6 +112,19 @@ export default function App() {
   const [helpOpen, setHelpOpen] = useState<boolean>(false);
   const [mathModalOpen, setMathModalOpen] = useState<boolean>(false);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const [isCompactViewport, setIsCompactViewport] = useState<boolean>(() =>
+    typeof window !== 'undefined'
+      ? window.innerWidth < 768 || window.innerHeight <= 540
+      : false
+  );
+
+  useEffect(() => {
+    const onResize = () => {
+      setIsCompactViewport(window.innerWidth < 768 || window.innerHeight <= 540);
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   // Viewport, Scroll request, Selection & Ruler
   const [viewport, setViewport] = useState<ViewportState>({
@@ -263,7 +276,7 @@ export default function App() {
                 normalizedDoc.pages[0];
               if (firstPage) {
                 syncPaletteForTemplate(firstPage.template);
-                if (firstPage.pageSize !== 'infinite') {
+                if (firstPage.pageSize !== 'infinite' && window.innerWidth >= 768) {
                   setTocOpen(true);
                 }
               }
@@ -282,7 +295,7 @@ export default function App() {
           const activeP = active.pages.find((p) => p.id === active.activePageId) || active.pages[0];
           if (activeP) {
             syncPaletteForTemplate(activeP.template);
-            if (activeP.pageSize !== 'infinite') {
+            if (activeP.pageSize !== 'infinite' && window.innerWidth >= 768) {
               setTocOpen(true);
             }
           }
@@ -564,7 +577,7 @@ export default function App() {
         imported.pages.find((p) => p.id === imported.activePageId) || imported.pages[0];
       if (firstPage) {
         syncPaletteForTemplate(firstPage.template);
-        if (firstPage.pageSize !== 'infinite') {
+        if (firstPage.pageSize !== 'infinite' && window.innerWidth >= 768) {
           setTocOpen(true);
         }
       }
@@ -666,7 +679,7 @@ export default function App() {
   }, [handleUndo, handleRedo, handleSave, handleOpenFileTrigger]);
 
   const getLocalPageCenter = () => {
-    const sideOffset = tocOpen ? 236 : 0;
+    const sideOffset = tocOpen && window.innerWidth >= 768 ? 236 : 0;
     const worldX = ((window.innerWidth - sideOffset) / 2 - viewport.offsetX) / viewport.zoom;
     const worldY = (window.innerHeight / 2 - viewport.offsetY) / viewport.zoom;
     return {
@@ -892,7 +905,9 @@ export default function App() {
         pages: prev.pages.map((p) => ({ ...p, pageSize })),
       }));
       if (pageSize !== 'infinite') {
-        setTocOpen(true);
+        if (window.innerWidth >= 768) {
+          setTocOpen(true);
+        }
         window.setTimeout(() => triggerScrollToPage(activePage.id), 40);
       } else {
         setViewport({ offsetX: 0, offsetY: 0, zoom: 1 });
@@ -907,12 +922,15 @@ export default function App() {
       return;
     }
     const dims = PAGE_DIMENSIONS[activePage.pageSize];
-    const tocW = tocOpen ? 240 : 0;
-    const drawerW = pagesDrawerOpen ? 288 : 0;
-    const canvasW = Math.max(320, window.innerWidth - tocW - drawerW);
-    const availW = Math.max(280, canvasW - 140);
-    const availH = window.innerHeight - 110;
-    const z = Math.min(availW / dims.width, availH / dims.height, 1.15);
+    const isDesktopSidebars = window.innerWidth >= 768;
+    const tocW = tocOpen && isDesktopSidebars ? 240 : 0;
+    const drawerW = pagesDrawerOpen && isDesktopSidebars ? 288 : 0;
+    const canvasW = Math.max(240, window.innerWidth - tocW - drawerW);
+    const padX = canvasW < 640 ? 24 : 140;
+    const padY = window.innerHeight < 540 ? 120 : 110;
+    const availW = Math.max(180, canvasW - padX);
+    const availH = Math.max(160, window.innerHeight - padY);
+    const z = Math.max(0.2, Math.min(availW / dims.width, availH / dims.height, 1.15));
     setViewport({
       zoom: z,
       offsetX: canvasW / 2,
@@ -932,7 +950,7 @@ export default function App() {
     <div
       onDragOver={(e) => e.preventDefault()}
       onDrop={handleDrop}
-      className="h-screen w-screen flex flex-col bg-slate-100 dark:bg-[#0F1115] text-slate-900 dark:text-slate-100 overflow-hidden"
+      className="h-dvh w-full flex flex-col bg-slate-100 dark:bg-[#0F1115] text-slate-900 dark:text-slate-100 overflow-hidden"
     >
       {/* Top Studio Bar */}
       <TopBar
@@ -972,7 +990,13 @@ export default function App() {
         darkMode={darkMode}
         onToggleDarkMode={() => setDarkMode((v) => !v)}
         pagesDrawerOpen={pagesDrawerOpen}
-        onTogglePagesDrawer={() => setPagesDrawerOpen((v) => !v)}
+        onTogglePagesDrawer={() =>
+          setPagesDrawerOpen((v) => {
+            const next = !v;
+            if (next && window.innerWidth < 768) setTocOpen(false);
+            return next;
+          })
+        }
         pageIndex={activePageIndex}
         pageCount={doc.pages.length}
         isFullscreen={isFullscreen}
@@ -1022,7 +1046,13 @@ export default function App() {
         saveStatus={saveStatus}
         linkedFileName={linkedFileHandle?.name ?? null}
         tocOpen={tocOpen}
-        onToggleToc={() => setTocOpen((v) => !v)}
+        onToggleToc={() =>
+          setTocOpen((v) => {
+            const next = !v;
+            if (next && window.innerWidth < 768) setPagesDrawerOpen(false);
+            return next;
+          })
+        }
         user={authUser}
         onOpenAuth={() => setAuthModalOpen(true)}
         customColors={customColors}
@@ -1042,6 +1072,7 @@ export default function App() {
             setDoc((prev) => ({ ...prev, activePageId: id }));
             setSelectedIds([]);
             triggerScrollToPage(id);
+            if (window.innerWidth < 768) setTocOpen(false);
           }}
           onAddPage={handleAddPage}
           onDeletePage={handleDeletePage}
@@ -1051,6 +1082,7 @@ export default function App() {
         {/* Canvas Pane (ToolDock + Zoom Bar + Canvas + Pager sit cleanly inside) */}
         <div className="relative flex-1 flex overflow-hidden">
           <ToolDock
+            isCompact={isCompactViewport}
             activeTool={activeTool}
             onSelectTool={(t) => {
               if (t === 'pen' || t === 'pencil' || t === 'highlighter') {
@@ -1129,9 +1161,15 @@ export default function App() {
             onSelectTool={setActiveTool}
           />
 
-          {/* Quick Bottom-Center Multi-Page Switcher */}
+          {/* Quick Multi-Page Switcher (Top-left on compact mobile so it never collides with Bottom ToolDock) */}
           {doc.pages.length > 1 && (
-            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1 px-2 py-1 rounded-xl bg-white/95 dark:bg-[#161920]/95 backdrop-blur-md border border-slate-200 dark:border-slate-800 shadow-md select-none">
+            <div
+              className={`absolute z-30 flex items-center gap-0.5 sm:gap-1 rounded-xl bg-white/95 dark:bg-[#161920]/95 backdrop-blur-md border border-slate-200 dark:border-slate-800 shadow-md select-none ${
+                isCompactViewport
+                  ? 'top-2 left-2 px-1 py-0.5'
+                  : 'bottom-3 left-1/2 -translate-x-1/2 px-2 py-1'
+              }`}
+            >
               <button
                 type="button"
                 disabled={activePageIndex === 0}
@@ -1149,8 +1187,12 @@ export default function App() {
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
-              <span className="px-2 text-xs font-mono-tabular font-medium text-slate-700 dark:text-slate-200">
-                Trang {activePageIndex + 1} / {doc.pages.length}
+              <span
+                className={`${isCompactViewport ? 'px-1 text-[11px]' : 'px-2 text-xs'} font-mono-tabular font-medium text-slate-700 dark:text-slate-200 whitespace-nowrap`}
+              >
+                {isCompactViewport
+                  ? `${activePageIndex + 1}/${doc.pages.length}`
+                  : `Trang ${activePageIndex + 1} / ${doc.pages.length}`}
               </span>
               <button
                 type="button"
@@ -1183,6 +1225,7 @@ export default function App() {
             setDoc((prev) => ({ ...prev, activePageId: id }));
             setSelectedIds([]);
             triggerScrollToPage(id);
+            if (window.innerWidth < 768) setPagesDrawerOpen(false);
           }}
           onAddPage={handleAddPage}
           onDuplicatePage={handleDuplicatePage}
@@ -1259,7 +1302,7 @@ export default function App() {
           const firstP = nb.pages.find((p) => p.id === nb.activePageId) || nb.pages[0];
           if (firstP) {
             syncPaletteForTemplate(firstP.template);
-            if (firstP.pageSize !== 'infinite') setTocOpen(true);
+            if (firstP.pageSize !== 'infinite' && window.innerWidth >= 768) setTocOpen(true);
           }
         }}
         onCreateNotebook={async () => {
@@ -1348,7 +1391,11 @@ export default function App() {
 
       {/* Toast Notification */}
       {toast && (
-        <div className="fixed bottom-4 right-4 z-50 px-4 py-2.5 rounded-xl bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 text-xs font-medium shadow-xl">
+        <div
+          className={`fixed right-3 sm:right-4 z-50 px-3.5 py-2.5 rounded-xl bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 text-xs font-medium shadow-xl max-w-[calc(100vw-24px)] ${
+            isCompactViewport ? 'bottom-16' : 'bottom-4'
+          }`}
+        >
           {toast}
         </div>
       )}

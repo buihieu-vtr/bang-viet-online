@@ -14,6 +14,7 @@ import {
   Maximize2,
   Minimize2,
   Moon,
+  MoreHorizontal,
   Palette,
   PanelLeft,
   PenLine,
@@ -130,12 +131,16 @@ export const TopBar: React.FC<TopBarProps> = ({
   onRemoveCustomColor,
 }) => {
   const [fileMenuOpen, setFileMenuOpen] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [editingSlotId, setEditingSlotId] = useState<string | null>(null);
   const [quickColorOpen, setQuickColorOpen] = useState(false);
   const [editingTitle, setEditingTitle] = useState(false);
   const [draftTitle, setDraftTitle] = useState(title);
   const fileMenuRef = useRef<HTMLDivElement>(null);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
   const slotEditorRef = useRef<HTMLDivElement>(null);
+  const mobileSlotEditorRef = useRef<HTMLDivElement>(null);
+  const slotPopoverRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setDraftTitle(title);
@@ -143,10 +148,17 @@ export const TopBar: React.FC<TopBarProps> = ({
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (fileMenuRef.current && !fileMenuRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (fileMenuRef.current && !fileMenuRef.current.contains(target)) {
         setFileMenuOpen(false);
       }
-      if (slotEditorRef.current && !slotEditorRef.current.contains(e.target as Node)) {
+      if (moreMenuRef.current && !moreMenuRef.current.contains(target)) {
+        setMoreMenuOpen(false);
+      }
+      const inDesktopSlots = slotEditorRef.current?.contains(target);
+      const inMobileSlots = mobileSlotEditorRef.current?.contains(target);
+      const inPopover = slotPopoverRef.current?.contains(target);
+      if (!inDesktopSlots && !inMobileSlots && !inPopover) {
         setEditingSlotId(null);
         setQuickColorOpen(false);
       }
@@ -173,47 +185,196 @@ export const TopBar: React.FC<TopBarProps> = ({
   const isGreenboard = activeTemplate === 'greenboard' || activeTemplate === 'greenboard_grid';
   const isChalkboard = activeTemplate === 'chalkboard';
 
-  return (
-    <header className="relative z-40 h-14 px-2.5 flex items-center justify-between gap-2 bg-white/95 dark:bg-[#161920]/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 select-none shrink-0">
-      {/* Zone 1: Brand + Mục lục + File Menu + Document Title + Undo/Redo */}
-      <div className="flex items-center gap-1 shrink-0">
-        <div className="flex items-center gap-1.5 pr-1.5 border-r border-slate-200 dark:border-slate-800 shrink-0">
-          <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center shadow-xs shrink-0">
-            <PenLine className="w-4 h-4" />
-          </div>
-          <span className="font-display font-bold text-sm tracking-tight text-slate-900 dark:text-slate-100 whitespace-nowrap hidden min-[1720px]:inline">
-            InkBoard
-          </span>
-        </div>
+  const renderPenControls = (compactMobile: boolean) => (
+    <>
+      {penSlots.map((slot) => {
+        const selected = isInkToolActive && activeSlotId === slot.id;
+        return (
+          <button
+            key={slot.id}
+            type="button"
+            onClick={() => {
+              setQuickColorOpen(false);
+              if (selected) {
+                setEditingSlotId((prev) => (prev === slot.id ? null : slot.id));
+              } else {
+                onSelectPenSlot(slot);
+                setEditingSlotId(null);
+              }
+            }}
+            title={`${slot.label} (${slot.width}px) — Nhấn lần nữa để tùy chỉnh`}
+            className={`relative h-8 w-8 rounded-lg flex items-center justify-center transition-all cursor-pointer shrink-0 ${
+              selected
+                ? 'bg-white dark:bg-slate-900 shadow-xs ring-2 ring-blue-600'
+                : 'hover:bg-white/60 dark:hover:bg-slate-700/60'
+            }`}
+          >
+            {slot.tool === 'highlighter' ? (
+              <span
+                className="w-4 h-4 rounded-xs border border-black/15"
+                style={{ backgroundColor: slot.color, opacity: 0.8 }}
+              />
+            ) : (
+              <span
+                className="rounded-full border border-black/20 dark:border-white/25"
+                style={{
+                  backgroundColor: slot.color,
+                  width: `${Math.min(18, Math.max(7, slot.width * 1.9))}px`,
+                  height: `${Math.min(18, Math.max(7, slot.width * 1.9))}px`,
+                }}
+              />
+            )}
+            {slot.tool === 'pencil' && (
+              <span className="absolute -bottom-0.5 right-0.5 text-[8px] font-bold text-slate-500">
+                P
+              </span>
+            )}
+          </button>
+        );
+      })}
 
-        {/* Mục lục (A4 Outline Sidebar Toggle) */}
+      {/* Quick Custom Color Strip Trigger */}
+      <button
+        type="button"
+        onClick={() => {
+          setEditingSlotId(null);
+          setQuickColorOpen((v) => !v);
+        }}
+        title="Dải màu tự chọn cho bút đang dùng"
+        className={`h-8 px-2 rounded-lg flex items-center gap-1.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+          quickColorOpen
+            ? 'bg-white dark:bg-slate-900 text-blue-600 shadow-xs ring-2 ring-blue-600'
+            : 'text-slate-600 dark:text-slate-300 hover:bg-white/70 dark:hover:bg-slate-700/70'
+        }`}
+      >
+        <span
+          className="w-3.5 h-3.5 rounded-full border border-black/20 dark:border-white/25 shrink-0"
+          style={{ backgroundColor: currentActiveSlot.color }}
+        />
+        <Palette className="w-3.5 h-3.5" />
+        <span className={compactMobile ? 'inline' : 'hidden 2xl:inline'}>Dải màu</span>
+      </button>
+
+      <div className="w-px h-5 bg-slate-300 dark:bg-slate-700 mx-0.5 shrink-0" />
+
+      {/* Quick 1-click Board Surface Switcher */}
+      <div className="flex items-center gap-0.5 bg-white/60 dark:bg-slate-900/60 p-0.5 rounded-lg border border-slate-200/70 dark:border-slate-700/70 shrink-0">
         <button
           type="button"
-          onClick={onToggleToc}
-          title="Mục lục trang A4 (xem trước & lướt nhanh)"
-          className={`h-8 px-2 rounded-lg flex items-center gap-1.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-            tocOpen
-              ? 'bg-blue-600 text-white shadow-xs'
-              : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+          onClick={() => onQuickSwitchBoard('blank')}
+          title="Bảng trắng từ tính"
+          className={`h-7 px-1.5 2xl:px-2 rounded-md text-[11px] font-medium flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap ${
+            !isGreenboard && !isChalkboard
+              ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-xs'
+              : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
           }`}
         >
-          <PanelLeft className="w-4 h-4" />
-          <span className="hidden xl:inline">Mục lục</span>
+          <span className="w-3 h-3 rounded-xs bg-white border border-slate-300 shrink-0" />
+          <span className={compactMobile ? 'inline' : 'hidden min-[1720px]:inline'}>Trắng</span>
         </button>
+        <button
+          type="button"
+          onClick={() => onQuickSwitchBoard('greenboard')}
+          title="Bảng xanh RAL 180 30 15 (#274C43) có lưới trắng nhạt"
+          className={`h-7 px-1.5 min-[1720px]:px-2 rounded-md text-[11px] font-medium flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap ${
+            isGreenboard
+              ? 'bg-[#274C43] text-white shadow-xs'
+              : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
+          }`}
+        >
+          <span className="w-3 h-3 rounded-xs bg-[#274C43] border border-white/25 shrink-0" />
+          <span className={compactMobile ? 'inline' : 'hidden min-[1720px]:inline'}>Xanh</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => onQuickSwitchBoard('chalkboard')}
+          title="Bảng đen phấn"
+          className={`h-7 px-1.5 min-[1720px]:px-2 rounded-md text-[11px] font-medium flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap ${
+            isChalkboard
+              ? 'bg-slate-900 text-white shadow-xs'
+              : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
+          }`}
+        >
+          <span className="w-3 h-3 rounded-xs bg-[#1B2027] border border-white/25 shrink-0" />
+          <span className={compactMobile ? 'inline' : 'hidden min-[1720px]:inline'}>Đen</span>
+        </button>
+      </div>
 
-        {/* File Menu */}
-        <div className="relative shrink-0" ref={fileMenuRef}>
+      {/* Ink-to-Shape Toggle */}
+      <button
+        type="button"
+        onClick={onToggleInkToShape}
+        title="Nhận diện hình tự động (Vẽ tay thành hình học)"
+        className={`h-8 px-2 rounded-lg flex items-center gap-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+          inkToShape
+            ? 'bg-blue-600 text-white shadow-xs'
+            : 'text-slate-600 dark:text-slate-300 hover:bg-white/70 dark:hover:bg-slate-700/70'
+        }`}
+      >
+        <Shapes className="w-3.5 h-3.5" />
+        <span className={compactMobile ? 'inline' : 'hidden min-[1720px]:inline'}>Tự nắn</span>
+      </button>
+
+      {/* Interactive Ruler Toggle */}
+      <button
+        type="button"
+        onClick={onToggleRuler}
+        title="Thước kẻ từ tính"
+        className={`h-8 px-2 rounded-lg flex items-center gap-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+          rulerVisible
+            ? 'bg-blue-600 text-white shadow-xs'
+            : 'text-slate-600 dark:text-slate-300 hover:bg-white/70 dark:hover:bg-slate-700/70'
+        }`}
+      >
+        <Ruler className="w-3.5 h-3.5" />
+        <span className={compactMobile ? 'inline' : 'hidden min-[1720px]:inline'}>Thước</span>
+      </button>
+    </>
+  );
+
+  return (
+    <header className="relative z-40 px-2 lg:px-2.5 bg-white/95 dark:bg-[#161920]/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 select-none shrink-0">
+      {/* Main Row (Row 1 on Mobile/Tablet, Full Single Bar on Desktop >= lg) */}
+      <div className="h-11 lg:h-14 flex items-center justify-between gap-1.5 lg:gap-2">
+        {/* Zone 1: Brand + Mục lục + File Menu + Document Title + Undo/Redo */}
+        <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
+          <div className="hidden sm:flex items-center gap-1.5 pr-1.5 border-r border-slate-200 dark:border-slate-800 shrink-0">
+            <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center shadow-xs shrink-0">
+              <PenLine className="w-4 h-4" />
+            </div>
+            <span className="font-display font-bold text-sm tracking-tight text-slate-900 dark:text-slate-100 whitespace-nowrap hidden min-[1720px]:inline">
+              InkBoard
+            </span>
+          </div>
+
+          {/* Mục lục (A4 Outline Sidebar Toggle) */}
           <button
             type="button"
-            onClick={() => setFileMenuOpen((v) => !v)}
-            className="h-8 px-2 rounded-lg flex items-center gap-1 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            onClick={onToggleToc}
+            title="Mục lục trang A4 (xem trước & lướt nhanh)"
+            className={`h-8 px-2 rounded-lg flex items-center gap-1.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+              tocOpen
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}
           >
-            <span>Tệp</span>
-            <ChevronDown className="w-3.5 h-3.5 opacity-60" />
+            <PanelLeft className="w-4 h-4" />
+            <span className="hidden xl:inline">Mục lục</span>
           </button>
 
-          {fileMenuOpen && (
-            <div className="absolute left-0 top-11 w-68 rounded-xl bg-white dark:bg-[#1B1F27] border border-slate-200 dark:border-slate-700 shadow-xl py-1.5 z-50">
+          {/* File Menu */}
+          <div className="relative shrink-0" ref={fileMenuRef}>
+            <button
+              type="button"
+              onClick={() => setFileMenuOpen((v) => !v)}
+              className="h-8 px-2 rounded-lg flex items-center gap-1 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              <span>Tệp</span>
+              <ChevronDown className="w-3.5 h-3.5 opacity-60" />
+            </button>
+
+            {fileMenuOpen && (
+              <div className="fixed left-2 right-2 top-12 sm:absolute sm:left-0 sm:right-auto sm:top-11 sm:w-68 max-h-[calc(100dvh-64px)] overflow-y-auto rounded-xl bg-white dark:bg-[#1B1F27] border border-slate-200 dark:border-slate-700 shadow-xl py-1.5 z-50">
               <button
                 type="button"
                 onClick={() => {
@@ -401,264 +562,15 @@ export const TopBar: React.FC<TopBarProps> = ({
         </div>
       </div>
 
-      {/* Zone 2: Quick Pen Slots + Quick Board Switcher + Ruler */}
-      <div className="flex items-center gap-1 bg-slate-100/80 dark:bg-slate-800/70 p-1 rounded-xl border border-slate-200/80 dark:border-slate-700/80 relative shrink-0" ref={slotEditorRef}>
-        {penSlots.map((slot) => {
-          const selected = isInkToolActive && activeSlotId === slot.id;
-          return (
-            <button
-              key={slot.id}
-              type="button"
-              onClick={() => {
-                setQuickColorOpen(false);
-                if (selected) {
-                  setEditingSlotId((prev) => (prev === slot.id ? null : slot.id));
-                } else {
-                  onSelectPenSlot(slot);
-                  setEditingSlotId(null);
-                }
-              }}
-              title={`${slot.label} (${slot.width}px) — Nhấn lần nữa để tùy chỉnh`}
-              className={`relative h-7 w-7 sm:h-8 sm:w-8 rounded-lg flex items-center justify-center transition-all cursor-pointer shrink-0 ${
-                selected
-                  ? 'bg-white dark:bg-slate-900 shadow-xs ring-2 ring-blue-600'
-                  : 'hover:bg-white/60 dark:hover:bg-slate-700/60'
-              }`}
-            >
-              {slot.tool === 'highlighter' ? (
-                <span
-                  className="w-4 h-4 rounded-xs border border-black/15"
-                  style={{ backgroundColor: slot.color, opacity: 0.8 }}
-                />
-              ) : (
-                <span
-                  className="rounded-full border border-black/20 dark:border-white/25"
-                  style={{
-                    backgroundColor: slot.color,
-                    width: `${Math.min(18, Math.max(7, slot.width * 1.9))}px`,
-                    height: `${Math.min(18, Math.max(7, slot.width * 1.9))}px`,
-                  }}
-                />
-              )}
-              {slot.tool === 'pencil' && (
-                <span className="absolute -bottom-0.5 right-0.5 text-[8px] font-bold text-slate-500">
-                  P
-                </span>
-              )}
-            </button>
-          );
-        })}
-
-        {/* Quick Custom Color Strip Trigger */}
-        <button
-          type="button"
-          onClick={() => {
-            setEditingSlotId(null);
-            setQuickColorOpen((v) => !v);
-          }}
-          title="Dải màu tự chọn cho bút đang dùng"
-          className={`h-8 px-2 rounded-lg flex items-center gap-1.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-            quickColorOpen
-              ? 'bg-white dark:bg-slate-900 text-blue-600 shadow-xs ring-2 ring-blue-600'
-              : 'text-slate-600 dark:text-slate-300 hover:bg-white/70 dark:hover:bg-slate-700/70'
-          }`}
-        >
-          <span
-            className="w-3.5 h-3.5 rounded-full border border-black/20 dark:border-white/25 shrink-0"
-            style={{ backgroundColor: currentActiveSlot.color }}
-          />
-          <Palette className="w-3.5 h-3.5" />
-          <span className="hidden 2xl:inline">Dải màu</span>
-        </button>
-
-        <div className="w-px h-5 bg-slate-300 dark:bg-slate-700 mx-0.5" />
-
-        {/* Quick 1-click Board Surface Switcher: Whiteboard vs Realistic Greenboard vs Chalkboard */}
-        <div className="hidden lg:flex items-center gap-0.5 bg-white/60 dark:bg-slate-900/60 p-0.5 rounded-lg border border-slate-200/70 dark:border-slate-700/70 shrink-0">
-          <button
-            type="button"
-            onClick={() => onQuickSwitchBoard('blank')}
-            title="Bảng trắng từ tính"
-            className={`h-7 px-1.5 2xl:px-2 rounded-md text-[11px] font-medium flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap ${
-              !isGreenboard && !isChalkboard
-                ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-xs'
-                : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
-            }`}
-          >
-            <span className="w-3 h-3 rounded-xs bg-white border border-slate-300" />
-            <span className="hidden min-[1720px]:inline">Trắng</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => onQuickSwitchBoard('greenboard')}
-            title="Bảng xanh RAL 180 30 15 (#274C43) có lưới trắng nhạt"
-            className={`h-7 px-1.5 min-[1720px]:px-2 rounded-md text-[11px] font-medium flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap ${
-              isGreenboard
-                ? 'bg-[#274C43] text-white shadow-xs'
-                : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
-            }`}
-          >
-            <span className="w-3 h-3 rounded-xs bg-[#274C43] border border-white/25" />
-            <span className="hidden min-[1720px]:inline">Bảng xanh</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => onQuickSwitchBoard('chalkboard')}
-            title="Bảng đen phấn"
-            className={`h-7 px-1.5 min-[1720px]:px-2 rounded-md text-[11px] font-medium flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap ${
-              isChalkboard
-                ? 'bg-slate-900 text-white shadow-xs'
-                : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
-            }`}
-          >
-            <span className="w-3 h-3 rounded-xs bg-[#1B2027] border border-white/25" />
-            <span className="hidden min-[1720px]:inline">Đen</span>
-          </button>
-        </div>
-
-        {/* Ink-to-Shape Toggle */}
-        <button
-          type="button"
-          onClick={onToggleInkToShape}
-          title="Nhận diện hình tự động (Vẽ tay thành hình học)"
-          className={`h-8 px-2 rounded-lg flex items-center gap-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-            inkToShape
-              ? 'bg-blue-600 text-white shadow-xs'
-              : 'text-slate-600 dark:text-slate-300 hover:bg-white/70 dark:hover:bg-slate-700/70'
-          }`}
-        >
-          <Shapes className="w-3.5 h-3.5" />
-          <span className="hidden min-[1720px]:inline">Tự nắn</span>
-        </button>
-
-        {/* Interactive Ruler Toggle */}
-        <button
-          type="button"
-          onClick={onToggleRuler}
-          title="Thước kẻ từ tính"
-          className={`h-8 px-2 rounded-lg flex items-center gap-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-            rulerVisible
-              ? 'bg-blue-600 text-white shadow-xs'
-              : 'text-slate-600 dark:text-slate-300 hover:bg-white/70 dark:hover:bg-slate-700/70'
-          }`}
-        >
-          <Ruler className="w-3.5 h-3.5" />
-          <span className="hidden min-[1720px]:inline">Thước</span>
-        </button>
-
-        {/* Quick Custom Color Strip Popover */}
-        {quickColorOpen && (
-          <div className="absolute top-12 left-0 w-76 rounded-xl bg-white dark:bg-[#1B1F27] border border-slate-200 dark:border-slate-700 shadow-xl p-3.5 z-50">
-            <ColorPalettePicker
-              label={`Màu bút (${currentActiveSlot.label})`}
-              color={currentActiveSlot.color}
-              onChange={(hex) =>
-                onUpdatePenSlot({ ...currentActiveSlot, color: hex })
-              }
-              customColors={customColors}
-              onAddCustomColor={onAddCustomColor}
-              onRemoveCustomColor={onRemoveCustomColor}
-            />
-          </div>
-        )}
-
-        {/* Pen Slot Customizer Popover */}
-        {editingSlot && (
-          <div className="absolute top-12 left-0 w-76 rounded-xl bg-white dark:bg-[#1B1F27] border border-slate-200 dark:border-slate-700 shadow-xl p-3.5 z-50">
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-xs font-semibold text-slate-900 dark:text-slate-100">
-                Tùy chỉnh: {editingSlot.label}
-              </span>
-              <span className="text-[11px] font-mono-tabular text-slate-500">
-                {editingSlot.width}px
-              </span>
-            </div>
-
-            <div className="grid grid-cols-3 gap-1 p-1 rounded-lg bg-slate-100 dark:bg-slate-800 mb-3">
-              {(
-                [
-                  { id: 'pen', label: 'Bút mực' },
-                  { id: 'pencil', label: 'Chì / Phấn' },
-                  { id: 'highlighter', label: 'Dạ quang' },
-                ] as const
-              ).map((t) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() =>
-                    onUpdatePenSlot({
-                      ...editingSlot,
-                      tool: t.id,
-                      opacity: t.id === 'highlighter' ? 0.42 : t.id === 'pencil' ? 0.94 : 1,
-                      width:
-                        t.id === 'highlighter'
-                          ? Math.max(14, editingSlot.width)
-                          : Math.min(18, editingSlot.width),
-                    })
-                  }
-                  className={`py-1.5 text-[11px] font-medium rounded-md transition-colors cursor-pointer ${
-                    editingSlot.tool === t.id
-                      ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'
-                      : 'text-slate-600 dark:text-slate-400'
-                  }`}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
-
-            <div className="mb-3">
-              <ColorPalettePicker
-                color={editingSlot.color}
-                onChange={(hex) => onUpdatePenSlot({ ...editingSlot, color: hex })}
-                customColors={customColors}
-                onAddCustomColor={onAddCustomColor}
-                onRemoveCustomColor={onRemoveCustomColor}
-              />
-            </div>
-
-            <div className="space-y-1.5 mb-2.5">
-              <div className="flex justify-between text-[11px] text-slate-500">
-                <span>Độ dày nét</span>
-                <span className="font-mono-tabular">{editingSlot.width} px</span>
-              </div>
-              <input
-                type="range"
-                min={1}
-                max={editingSlot.tool === 'highlighter' ? 48 : 28}
-                step={0.5}
-                value={editingSlot.width}
-                onChange={(e) =>
-                  onUpdatePenSlot({ ...editingSlot, width: parseFloat(e.target.value) })
-                }
-                className="w-full accent-blue-600 cursor-pointer"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <div className="flex justify-between text-[11px] text-slate-500">
-                <span>Độ mờ đục</span>
-                <span className="font-mono-tabular">
-                  {Math.round(editingSlot.opacity * 100)}%
-                </span>
-              </div>
-              <input
-                type="range"
-                min={0.15}
-                max={1}
-                step={0.05}
-                value={editingSlot.opacity}
-                onChange={(e) =>
-                  onUpdatePenSlot({ ...editingSlot, opacity: parseFloat(e.target.value) })
-                }
-                className="w-full accent-blue-600 cursor-pointer"
-              />
-            </div>
-          </div>
-        )}
+      {/* Zone 2 (Desktop >= lg): Quick Pen Slots + Quick Board Switcher + Ruler */}
+      <div
+        className="hidden lg:flex items-center gap-1 bg-slate-100/80 dark:bg-slate-800/70 p-1 rounded-xl border border-slate-200/80 dark:border-slate-700/80 relative shrink-0"
+        ref={slotEditorRef}
+      >
+        {renderPenControls(false)}
       </div>
 
-      {/* Zone 3: Palm Rejection, Library, Pages, Web Link, Theme, Fullscreen */}
+      {/* Zone 3: Palm Rejection, Library, Pages, Web Link, Auth, More (Mobile), Theme, Fullscreen */}
       <div className="flex items-center gap-1 shrink-0">
         <button
           type="button"
@@ -668,7 +580,7 @@ export const TopBar: React.FC<TopBarProps> = ({
               ? 'Chế độ Chỉ Bút đang BẬT (chặn cảm ứng tay để chống tì tay)'
               : 'Chế độ Chỉ Bút đang TẮT'
           }
-          className={`h-8 px-2 rounded-lg flex items-center gap-1 text-xs font-medium border transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+          className={`hidden lg:flex h-8 px-2 rounded-lg items-center gap-1 text-xs font-medium border transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
             stylusOnly
               ? 'bg-amber-50 dark:bg-amber-950/50 border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-300'
               : 'border-transparent text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
@@ -684,7 +596,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           type="button"
           onClick={onOpenLibrary}
           title="Sổ tay cục bộ"
-          className="h-8 px-2 rounded-lg flex items-center gap-1 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+          className="hidden sm:flex h-8 px-2 rounded-lg items-center gap-1 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
         >
           <BookOpen className="w-3.5 h-3.5" />
           <span className="hidden 2xl:inline">Sổ tay</span>
@@ -710,7 +622,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           type="button"
           onClick={onOpenWebLink}
           title="Tạo Link Web chia sẻ & Tên miền riêng (Không cần Server)"
-          className={`h-8 px-2 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+          className={`hidden sm:flex h-8 px-2 rounded-lg text-xs font-medium items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
             activeSlug
               ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
               : 'bg-blue-600 hover:bg-blue-700 text-white'
@@ -726,7 +638,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           type="button"
           onClick={onOpenSaveAs}
           title="Lưu thành / Xuất PDF, PNG, SVG"
-          className="h-8 px-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium flex items-center gap-1 whitespace-nowrap shrink-0 cursor-pointer"
+          className="hidden lg:flex h-8 px-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium items-center gap-1 whitespace-nowrap shrink-0 cursor-pointer"
         >
           <Save className="w-3.5 h-3.5" />
           <span className="hidden 2xl:inline">Xuất</span>
@@ -756,7 +668,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           ) : (
             <UserIcon className="w-3.5 h-3.5" />
           )}
-          <span className="hidden xl:inline max-w-[84px] truncate">
+          <span className="hidden sm:inline max-w-[84px] truncate">
             {user ? user.displayName || user.email?.split('@')[0] || 'Tài khoản' : 'Đăng nhập'}
           </span>
           {user && (
@@ -768,11 +680,135 @@ export const TopBar: React.FC<TopBarProps> = ({
           )}
         </button>
 
+        {/* Mobile/Tablet Overflow Menu (< lg) */}
+        <div className="relative lg:hidden shrink-0" ref={moreMenuRef}>
+          <button
+            type="button"
+            onClick={() => setMoreMenuOpen((v) => !v)}
+            title="Thêm tùy chọn"
+            className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors cursor-pointer ${
+              moreMenuOpen
+                ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900'
+                : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}
+          >
+            <MoreHorizontal className="w-4 h-4" />
+          </button>
+
+          {moreMenuOpen && (
+            <div className="fixed right-2 top-12 w-60 max-h-[calc(100dvh-64px)] overflow-y-auto rounded-xl bg-white dark:bg-[#1B1F27] border border-slate-200 dark:border-slate-700 shadow-xl py-1.5 z-50">
+              <button
+                type="button"
+                onClick={() => {
+                  setMoreMenuOpen(false);
+                  onOpenLibrary();
+                }}
+                className="sm:hidden w-full px-3.5 py-2.5 text-left text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5 cursor-pointer"
+              >
+                <BookOpen className="w-4 h-4 text-slate-500" />
+                Sổ tay cục bộ
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setMoreMenuOpen(false);
+                  onOpenWebLink();
+                }}
+                className="sm:hidden w-full px-3.5 py-2.5 text-left text-xs font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 flex items-center gap-2.5 cursor-pointer"
+              >
+                <Globe className="w-4 h-4" />
+                {activeSlug ? `Link Web (#${activeSlug})` : 'Tạo Link Web chia sẻ'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setMoreMenuOpen(false);
+                  onOpenSaveAs();
+                }}
+                className="w-full px-3.5 py-2.5 text-left text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5 cursor-pointer"
+              >
+                <Save className="w-4 h-4 text-blue-600" />
+                Xuất PDF / PNG / SVG...
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  onToggleStylusOnly();
+                }}
+                className="w-full px-3.5 py-2.5 text-left text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-between cursor-pointer"
+              >
+                <span className="flex items-center gap-2.5">
+                  <Smartphone className="w-4 h-4 text-slate-500" />
+                  Chế độ Chỉ Bút (Chống tì tay)
+                </span>
+                <span
+                  className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                    stylusOnly
+                      ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300'
+                      : 'text-slate-400'
+                  }`}
+                >
+                  {stylusOnly ? 'BẬT' : 'TẮT'}
+                </span>
+              </button>
+
+              <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
+
+              <button
+                type="button"
+                onClick={() => {
+                  onToggleDarkMode();
+                  setMoreMenuOpen(false);
+                }}
+                className="w-full px-3.5 py-2.5 text-left text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5 cursor-pointer"
+              >
+                {darkMode ? (
+                  <Sun className="w-4 h-4 text-amber-500" />
+                ) : (
+                  <Moon className="w-4 h-4 text-slate-500" />
+                )}
+                {darkMode ? 'Chuyển giao diện Sáng' : 'Chuyển giao diện Tối'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setMoreMenuOpen(false);
+                  onOpenHelp();
+                }}
+                className="w-full px-3.5 py-2.5 text-left text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5 cursor-pointer"
+              >
+                <HelpCircle className="w-4 h-4 text-slate-500" />
+                Hướng dẫn dùng Web
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setMoreMenuOpen(false);
+                  onToggleFullscreen();
+                }}
+                className="w-full px-3.5 py-2.5 text-left text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5 cursor-pointer"
+              >
+                {isFullscreen ? (
+                  <Minimize2 className="w-4 h-4 text-slate-500" />
+                ) : (
+                  <Maximize2 className="w-4 h-4 text-slate-500" />
+                )}
+                {isFullscreen ? 'Thoát toàn màn hình' : 'Toàn màn hình'}
+              </button>
+            </div>
+          )}
+        </div>
+
         <button
           type="button"
           onClick={onOpenHelp}
           title="Hướng dẫn dùng Web, tải về & chạy tên miền riêng"
-          className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+          className="hidden lg:flex w-8 h-8 rounded-lg items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
         >
           <HelpCircle className="w-4 h-4" />
         </button>
@@ -781,7 +817,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           type="button"
           onClick={onToggleDarkMode}
           title={darkMode ? 'Giao diện sáng' : 'Giao diện tối'}
-          className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+          className="hidden lg:flex w-8 h-8 rounded-lg items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
         >
           {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
         </button>
@@ -790,7 +826,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           type="button"
           onClick={onToggleFullscreen}
           title={isFullscreen ? 'Thoát toàn màn hình' : 'Toàn màn hình / Trình chiếu'}
-          className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer hidden sm:flex"
+          className="hidden lg:flex w-8 h-8 rounded-lg items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
         >
           {isFullscreen ? (
             <Minimize2 className="w-4 h-4" />
@@ -799,6 +835,130 @@ export const TopBar: React.FC<TopBarProps> = ({
           )}
         </button>
       </div>
+      </div>
+
+      {/* Mobile / Tablet Row 2 (< lg): Horizontally Scrollable Pen Slots, Color Strip, Boards, Auto-Shape & Ruler */}
+      <div
+        ref={mobileSlotEditorRef}
+        className="flex lg:hidden items-center gap-1 h-10 -mx-2 px-2 border-t border-slate-200/70 dark:border-slate-800/70 overflow-x-auto no-scrollbar"
+      >
+        {renderPenControls(true)}
+      </div>
+
+      {/* Viewport-Safe Floating Popovers (never clipped by overflow-x-auto or narrow screens) */}
+      {(quickColorOpen || editingSlot) && (
+        <div
+          ref={slotPopoverRef}
+          className="fixed inset-x-3 top-[88px] sm:inset-x-auto sm:left-1/2 sm:-translate-x-1/2 lg:top-14 sm:w-80 max-h-[calc(100dvh-104px)] overflow-y-auto rounded-xl bg-white dark:bg-[#1B1F27] border border-slate-200 dark:border-slate-700 shadow-2xl p-3.5 z-50"
+        >
+          {quickColorOpen && (
+            <ColorPalettePicker
+              label={`Màu bút (${currentActiveSlot.label})`}
+              color={currentActiveSlot.color}
+              onChange={(hex) =>
+                onUpdatePenSlot({ ...currentActiveSlot, color: hex })
+              }
+              customColors={customColors}
+              onAddCustomColor={onAddCustomColor}
+              onRemoveCustomColor={onRemoveCustomColor}
+            />
+          )}
+
+          {editingSlot && (
+            <>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-semibold text-slate-900 dark:text-slate-100">
+                  Tùy chỉnh: {editingSlot.label}
+                </span>
+                <span className="text-[11px] font-mono-tabular text-slate-500">
+                  {editingSlot.width}px
+                </span>
+              </div>
+
+              <div className="grid grid-cols-3 gap-1 p-1 rounded-lg bg-slate-100 dark:bg-slate-800 mb-3">
+                {(
+                  [
+                    { id: 'pen', label: 'Bút mực' },
+                    { id: 'pencil', label: 'Chì / Phấn' },
+                    { id: 'highlighter', label: 'Dạ quang' },
+                  ] as const
+                ).map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() =>
+                      onUpdatePenSlot({
+                        ...editingSlot,
+                        tool: t.id,
+                        opacity: t.id === 'highlighter' ? 0.42 : t.id === 'pencil' ? 0.94 : 1,
+                        width:
+                          t.id === 'highlighter'
+                            ? Math.max(14, editingSlot.width)
+                            : Math.min(18, editingSlot.width),
+                      })
+                    }
+                    className={`py-1.5 text-[11px] font-medium rounded-md transition-colors cursor-pointer ${
+                      editingSlot.tool === t.id
+                        ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400'
+                    }`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="mb-3">
+                <ColorPalettePicker
+                  color={editingSlot.color}
+                  onChange={(hex) => onUpdatePenSlot({ ...editingSlot, color: hex })}
+                  customColors={customColors}
+                  onAddCustomColor={onAddCustomColor}
+                  onRemoveCustomColor={onRemoveCustomColor}
+                />
+              </div>
+
+              <div className="space-y-1.5 mb-2.5">
+                <div className="flex justify-between text-[11px] text-slate-500">
+                  <span>Độ dày nét</span>
+                  <span className="font-mono-tabular">{editingSlot.width} px</span>
+                </div>
+                <input
+                  type="range"
+                  min={1}
+                  max={editingSlot.tool === 'highlighter' ? 48 : 28}
+                  step={0.5}
+                  value={editingSlot.width}
+                  onChange={(e) =>
+                    onUpdatePenSlot({ ...editingSlot, width: parseFloat(e.target.value) })
+                  }
+                  className="w-full accent-blue-600 cursor-pointer"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex justify-between text-[11px] text-slate-500">
+                  <span>Độ mờ đục</span>
+                  <span className="font-mono-tabular">
+                    {Math.round(editingSlot.opacity * 100)}%
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={0.15}
+                  max={1}
+                  step={0.05}
+                  value={editingSlot.opacity}
+                  onChange={(e) =>
+                    onUpdatePenSlot({ ...editingSlot, opacity: parseFloat(e.target.value) })
+                  }
+                  className="w-full accent-blue-600 cursor-pointer"
+                />
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </header>
   );
 };

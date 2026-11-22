@@ -49,19 +49,24 @@ export const PagesDrawer: React.FC<PagesDrawerProps> = ({
   const activePage = pages.find((p) => p.id === activePageId) || pages[0];
 
   return (
-    <aside className="w-72 h-full bg-white dark:bg-[#161920] border-l border-slate-200 dark:border-slate-800 flex flex-col shrink-0 select-none z-30">
-      <div className="h-12 px-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
-        <span className="font-display font-semibold text-sm text-slate-900 dark:text-slate-100">
-          Trang & Mẫu giấy
-        </span>
-        <button
-          type="button"
-          onClick={onClose}
-          className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-        >
-          <X className="w-4 h-4" />
-        </button>
-      </div>
+    <>
+      <div
+        onClick={onClose}
+        className="md:hidden absolute inset-0 bg-slate-950/35 z-30"
+      />
+      <aside className="absolute inset-y-0 right-0 md:static w-72 max-w-[85vw] h-full bg-white dark:bg-[#161920] border-l border-slate-200 dark:border-slate-800 flex flex-col shrink-0 select-none z-40 md:z-30 shadow-xl md:shadow-none">
+        <div className="h-12 px-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between shrink-0">
+          <span className="font-display font-semibold text-sm text-slate-900 dark:text-slate-100">
+            Trang & Mẫu giấy
+          </span>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-6">
         {/* Paper Template Section */}
@@ -240,7 +245,7 @@ export const PagesDrawer: React.FC<PagesDrawerProps> = ({
                   </div>
 
                   <div
-                    className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                    className="flex items-center gap-0.5 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
                     onClick={(e) => e.stopPropagation()}
                   >
                     <button
@@ -287,5 +292,6 @@ export const PagesDrawer: React.FC<PagesDrawerProps> = ({
         </section>
       </div>
     </aside>
+    </>
   );
 };

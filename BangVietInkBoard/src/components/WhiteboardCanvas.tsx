@@ -206,6 +206,8 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
   const scrollbarDragRef = useRef<{ startY: number; origOffsetY: number } | null>(null);
   const wasPagedRef = useRef<boolean>(false);
   const lastHandledScrollSeqRef = useRef<number>(0);
+  const activeTouchPointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinchStateRef = useRef<{ lastDist: number; lastMidX: number; lastMidY: number } | null>(null);
 
   const isPagedMode = page.pageSize !== 'infinite';
 
@@ -245,10 +247,12 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
   // Center & fit A4 page when entering Paged Mode
   useEffect(() => {
     if (isPagedMode && !wasPagedRef.current && activeLayout && canvasSize.width > 100) {
-      const availW = Math.max(320, canvasSize.width - 140);
-      const availH = Math.max(320, canvasSize.height - 64);
+      const padX = canvasSize.width < 640 ? 24 : 140;
+      const padY = canvasSize.height < 520 ? 36 : 64;
+      const availW = Math.max(180, canvasSize.width - padX);
+      const availH = Math.max(180, canvasSize.height - padY);
       const fitZ = Math.min(availW / activeLayout.width, availH / activeLayout.height, 0.95);
-      const z = Math.max(0.32, Math.round(fitZ * 100) / 100);
+      const z = Math.max(0.2, Math.round(fitZ * 100) / 100);
       onViewportChange({
         zoom: z,
         offsetX: canvasSize.width / 2,
@@ -754,12 +758,38 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
       commitInlineText();
     }
 
-    const isPalmTouch = stylusOnly && e.pointerType === 'touch';
-
     const canvas = canvasRef.current;
     if (canvas) {
-      canvas.setPointerCapture(e.pointerId);
+      try {
+        canvas.setPointerCapture(e.pointerId);
+      } catch {
+        // Ignore if pointer already released
+      }
     }
+
+    if (e.pointerType === 'touch') {
+      activeTouchPointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (activeTouchPointersRef.current.size >= 2) {
+        const pts = Array.from(activeTouchPointersRef.current.values());
+        const p1 = pts[0];
+        const p2 = pts[1];
+        const d = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+        pinchStateRef.current = {
+          lastDist: Math.max(1, d),
+          lastMidX: (p1.x + p2.x) / 2,
+          lastMidY: (p1.y + p2.y) / 2,
+        };
+        if (interactionRef.current.type === 'draw') setLiveDrawStroke(null);
+        if (interactionRef.current.type === 'shape') setLiveShape(null);
+        setLiveElements(null);
+        setLassoPoints(null);
+        setBoxSelectRect(null);
+        interactionRef.current = { type: 'none' };
+        return;
+      }
+    }
+
+    const isPalmTouch = stylusOnly && e.pointerType === 'touch';
 
     const pt = screenToWorld(e.clientX, e.clientY);
     setCursorWorld(pt);
@@ -1006,6 +1036,49 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (e.pointerType === 'touch' && activeTouchPointersRef.current.has(e.pointerId)) {
+      activeTouchPointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pinchStateRef.current && activeTouchPointersRef.current.size >= 2) {
+        const pts = Array.from(activeTouchPointersRef.current.values());
+        const p1 = pts[0];
+        const p2 = pts[1];
+        const newDist = Math.max(1, Math.hypot(p2.x - p1.x, p2.y - p1.y));
+        const newMidX = (p1.x + p2.x) / 2;
+        const newMidY = (p1.y + p2.y) / 2;
+
+        const prevPinch = pinchStateRef.current;
+        const scaleFactor = newDist / prevPinch.lastDist;
+        const dx = newMidX - prevPinch.lastMidX;
+        const dy = newMidY - prevPinch.lastMidY;
+
+        const rect = canvasRef.current?.getBoundingClientRect();
+        const anchorX = newMidX - (rect?.left ?? 0);
+        const anchorY = newMidY - (rect?.top ?? 0);
+
+        onViewportChange((prev) => {
+          const nextZoom = Math.min(4, Math.max(0.2, prev.zoom * scaleFactor));
+          const ratio = nextZoom / prev.zoom;
+          const nextOffsetX = anchorX - (anchorX - (prev.offsetX + dx)) * ratio;
+          const nextOffsetY = anchorY - (anchorY - (prev.offsetY + dy)) * ratio;
+          if (isPagedMode) {
+            syncActivePageFromOffsetY(nextOffsetY, nextZoom);
+          }
+          return {
+            zoom: nextZoom,
+            offsetX: nextOffsetX,
+            offsetY: nextOffsetY,
+          };
+        });
+
+        pinchStateRef.current = {
+          lastDist: newDist,
+          lastMidX: newMidX,
+          lastMidY: newMidY,
+        };
+        return;
+      }
+    }
+
     const pt = screenToWorld(e.clientX, e.clientY);
     setCursorWorld(pt);
 
@@ -1194,7 +1267,18 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
     }
   };
 
-  const handlePointerUp = () => {
+  const handlePointerUp = (e?: React.PointerEvent<HTMLCanvasElement>) => {
+    if (e && e.pointerType === 'touch') {
+      activeTouchPointersRef.current.delete(e.pointerId);
+      if (pinchStateRef.current) {
+        if (activeTouchPointersRef.current.size < 2) {
+          pinchStateRef.current = null;
+          interactionRef.current = { type: 'none' };
+        }
+        return;
+      }
+    }
+
     const mode = interactionRef.current;
     interactionRef.current = { type: 'none' };
 

@@ -70,6 +70,7 @@ interface ToolDockProps {
   customColors: string[];
   onAddCustomColor: (hex: string) => void;
   onRemoveCustomColor: (hex: string) => void;
+  isCompact?: boolean;
 }
 
 const SHAPE_OPTIONS: { id: ShapeType; label: string; icon: React.ReactNode }[] = [
@@ -118,14 +119,37 @@ export const ToolDock: React.FC<ToolDockProps> = ({
   customColors,
   onAddCustomColor,
   onRemoveCustomColor,
+  isCompact: isCompactProp,
 }) => {
   const [openMenu, setOpenMenu] = useState<'select' | 'eraser' | 'shape' | 'insert' | null>(null);
   const [shapeColorTab, setShapeColorTab] = useState<'stroke' | 'fill'>('stroke');
+  const [localCompact, setLocalCompact] = useState(() =>
+    typeof window !== 'undefined'
+      ? window.innerWidth < 768 || window.innerHeight <= 540
+      : false
+  );
   const dockRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (isCompactProp !== undefined) return;
+    const onResize = () => {
+      setLocalCompact(window.innerWidth < 768 || window.innerHeight <= 540);
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [isCompactProp]);
+
+  const isCompact = isCompactProp ?? localCompact;
 
   useEffect(() => {
     const handleOutside = (e: MouseEvent) => {
-      if (dockRef.current && !dockRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (
+        dockRef.current &&
+        !dockRef.current.contains(target) &&
+        (!popoverRef.current || !popoverRef.current.contains(target))
+      ) {
         setOpenMenu(null);
       }
     };
@@ -157,7 +181,7 @@ export const ToolDock: React.FC<ToolDockProps> = ({
           }
         }}
         title={label}
-        className={`relative w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer ${
+        className={`relative shrink-0 ${isCompact ? 'w-9 h-9' : 'w-10 h-10'} rounded-xl flex items-center justify-center transition-all cursor-pointer ${
           isActive
             ? 'bg-blue-600 text-white shadow-sm'
             : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
@@ -177,54 +201,81 @@ export const ToolDock: React.FC<ToolDockProps> = ({
 
   return (
     <>
-      {/* Left Floating Vertical Tool Dock */}
+      {/* Adaptive Floating Tool Dock: Bottom Horizontal on Compact/Mobile, Left Vertical on Tablet/Desktop */}
       <div
         ref={dockRef}
-        className="absolute left-3 top-1/2 -translate-y-1/2 z-30 flex flex-col gap-1 p-1.5 rounded-2xl bg-white/95 dark:bg-[#161920]/95 backdrop-blur-md border border-slate-200 dark:border-slate-800 shadow-lg select-none"
+        className={
+          isCompact
+            ? 'absolute bottom-2 left-1/2 -translate-x-1/2 z-30 max-w-[calc(100%-16px)] flex flex-row items-center gap-0.5 p-1 rounded-2xl bg-white/95 dark:bg-[#161920]/95 backdrop-blur-md border border-slate-200 dark:border-slate-800 shadow-lg select-none overflow-x-auto no-scrollbar'
+            : 'absolute left-3 top-1/2 -translate-y-1/2 z-30 flex flex-col gap-1 p-1.5 rounded-2xl bg-white/95 dark:bg-[#161920]/95 backdrop-blur-md border border-slate-200 dark:border-slate-800 shadow-lg select-none'
+        }
       >
         {toolBtn(
           'select',
           'Chọn đối tượng (Lasso / Hộp)',
           selectMode === 'lasso' ? (
-            <Lasso className="w-5 h-5" />
+            <Lasso className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />
           ) : (
-            <MousePointer2 className="w-5 h-5" />
+            <MousePointer2 className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />
           ),
           'select'
         )}
 
-        {toolBtn('pen', 'Bút mực mượt (Phím P)', <Pen className="w-5 h-5" />)}
-        {toolBtn('pencil', 'Bút chì phác thảo', <Pencil className="w-5 h-5" />)}
-        {toolBtn('highlighter', 'Bút dạ quang', <Highlighter className="w-5 h-5" />)}
-        {toolBtn('eraser', 'Tẩy nét / Tẩy vùng (Phím E)', <Eraser className="w-5 h-5" />, 'eraser')}
+        {toolBtn('pen', 'Bút mực mượt (Phím P)', <Pen className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />)}
+        {toolBtn('pencil', 'Bút chì phác thảo', <Pencil className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />)}
+        {toolBtn('highlighter', 'Bút dạ quang', <Highlighter className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />)}
+        {toolBtn('eraser', 'Tẩy nét / Tẩy vùng (Phím E)', <Eraser className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />, 'eraser')}
 
-        <div className="h-px bg-slate-200 dark:bg-slate-800 my-0.5 mx-1.5" />
+        <div
+          className={
+            isCompact
+              ? 'w-px h-5 bg-slate-200 dark:bg-slate-800 mx-0.5 shrink-0'
+              : 'h-px bg-slate-200 dark:bg-slate-800 my-0.5 mx-1.5'
+          }
+        />
 
-        {toolBtn('shape', 'Vẽ hình học & Biểu đồ', <Shapes className="w-5 h-5" />, 'shape')}
-        {toolBtn('text', 'Chèn khung văn bản (Phím T)', <Type className="w-5 h-5" />)}
+        {toolBtn('shape', 'Vẽ hình học & Biểu đồ', <Shapes className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />, 'shape')}
+        {toolBtn('text', 'Chèn khung văn bản (Phím T)', <Type className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />)}
 
         {/* Insert Popover Trigger */}
         <button
           type="button"
           onClick={() => setOpenMenu((prev) => (prev === 'insert' ? null : 'insert'))}
           title="Chèn Ảnh, Ghi chú dán, Toán học, Bảng..."
-          className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer ${
+          className={`shrink-0 ${isCompact ? 'w-9 h-9' : 'w-10 h-10'} rounded-xl flex items-center justify-center transition-all cursor-pointer ${
             openMenu === 'insert' || activeTool === 'sticky'
               ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 shadow-sm'
               : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
           }`}
         >
-          <PlusSquare className="w-5 h-5" />
+          <PlusSquare className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />
         </button>
 
-        <div className="h-px bg-slate-200 dark:bg-slate-800 my-0.5 mx-1.5" />
+        <div
+          className={
+            isCompact
+              ? 'w-px h-5 bg-slate-200 dark:bg-slate-800 mx-0.5 shrink-0'
+              : 'h-px bg-slate-200 dark:bg-slate-800 my-0.5 mx-1.5'
+          }
+        />
 
-        {toolBtn('laser', 'Bút Laser trình chiếu', <Flame className="w-5 h-5" />)}
-        {toolBtn('pan', 'Di chuyển bảng (Phím Space + Kéo)', <Hand className="w-5 h-5" />)}
+        {toolBtn('laser', 'Bút Laser trình chiếu', <Flame className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />)}
+        {toolBtn('pan', 'Di chuyển bảng (Phím Space + Kéo)', <Hand className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />)}
+      </div>
 
+      {/* Popovers (kept outside dockRef so overflow-x-auto on compact mode never clips them) */}
+      {openMenu && (
+        <div
+          ref={popoverRef}
+          className={
+            isCompact
+              ? 'fixed inset-x-3 bottom-14 sm:inset-x-auto sm:left-1/2 sm:-translate-x-1/2 sm:w-80 max-h-[60dvh] overflow-y-auto z-50'
+              : 'absolute left-16 top-1/2 -translate-y-1/2 z-40'
+          }
+        >
         {/* Popover: Select Mode */}
         {openMenu === 'select' && (
-          <div className="absolute left-14 top-0 w-52 rounded-xl bg-white dark:bg-[#1B1F27] border border-slate-200 dark:border-slate-700 shadow-xl p-2.5">
+          <div className={`${isCompact ? 'w-full' : 'w-52'} rounded-xl bg-white dark:bg-[#1B1F27] border border-slate-200 dark:border-slate-700 shadow-xl p-2.5`}>
             <div className="text-[11px] font-semibold text-slate-400 px-1 mb-1.5">
               Kiểu vùng chọn
             </div>
@@ -263,7 +314,7 @@ export const ToolDock: React.FC<ToolDockProps> = ({
 
         {/* Popover: Eraser Mode */}
         {openMenu === 'eraser' && (
-          <div className="absolute left-14 top-28 w-60 rounded-xl bg-white dark:bg-[#1B1F27] border border-slate-200 dark:border-slate-700 shadow-xl p-3 space-y-3">
+          <div className={`${isCompact ? 'w-full' : 'w-60'} rounded-xl bg-white dark:bg-[#1B1F27] border border-slate-200 dark:border-slate-700 shadow-xl p-3 space-y-3`}>
             <div className="text-[11px] font-semibold text-slate-400">Chế độ tẩy</div>
             <div className="grid grid-cols-2 gap-1 p-1 rounded-lg bg-slate-100 dark:bg-slate-800">
               <button
@@ -321,7 +372,7 @@ export const ToolDock: React.FC<ToolDockProps> = ({
 
         {/* Popover: Shapes Palette */}
         {openMenu === 'shape' && (
-          <div className="absolute left-14 top-10 w-76 max-h-[75vh] overflow-y-auto rounded-xl bg-white dark:bg-[#1B1F27] border border-slate-200 dark:border-slate-700 shadow-xl p-3 space-y-3">
+          <div className={`${isCompact ? 'w-full' : 'w-76 max-h-[75dvh] overflow-y-auto'} rounded-xl bg-white dark:bg-[#1B1F27] border border-slate-200 dark:border-slate-700 shadow-xl p-3 space-y-3`}>
             <div className="text-xs font-semibold text-slate-900 dark:text-slate-100">
               Chọn hình học
             </div>
@@ -417,7 +468,7 @@ export const ToolDock: React.FC<ToolDockProps> = ({
 
         {/* Popover: Insert Menu */}
         {openMenu === 'insert' && (
-          <div className="absolute left-14 bottom-6 w-64 rounded-xl bg-white dark:bg-[#1B1F27] border border-slate-200 dark:border-slate-700 shadow-xl p-2.5 space-y-1.5">
+          <div className={`${isCompact ? 'w-full' : 'w-64 max-h-[75dvh] overflow-y-auto'} rounded-xl bg-white dark:bg-[#1B1F27] border border-slate-200 dark:border-slate-700 shadow-xl p-2.5 space-y-1.5`}>
             <div className="text-[11px] font-semibold text-slate-400 px-1.5">
               Chèn vào bảng viết
             </div>
@@ -505,23 +556,28 @@ export const ToolDock: React.FC<ToolDockProps> = ({
             </div>
           </div>
         )}
-      </div>
+        </div>
+      )}
 
-      {/* Bottom-left Compact Zoom Bar */}
-      <div className="absolute left-3 bottom-3 z-30 flex items-center gap-0.5 p-1 rounded-xl bg-white/95 dark:bg-[#161920]/95 backdrop-blur-md border border-slate-200 dark:border-slate-800 shadow-md select-none">
+      {/* Compact Zoom Bar: Top-Right on Compact/Mobile, Bottom-Left on Tablet/Desktop */}
+      <div
+        className={`absolute z-30 flex items-center gap-0.5 rounded-xl bg-white/95 dark:bg-[#161920]/95 backdrop-blur-md border border-slate-200 dark:border-slate-800 shadow-md select-none ${
+          isCompact ? 'top-2 right-2 p-0.5' : 'left-3 bottom-3 p-1'
+        }`}
+      >
         <button
           type="button"
           onClick={onZoomOut}
           title="Thu nhỏ"
-          className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+          className={`${isCompact ? 'w-7 h-7' : 'w-8 h-8'} rounded-lg flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer`}
         >
-          <ZoomOut className="w-4 h-4" />
+          <ZoomOut className="w-3.5 h-3.5" />
         </button>
         <button
           type="button"
           onClick={onZoomReset}
           title="Đặt lại tỷ lệ 100%"
-          className="px-2 h-8 rounded-lg text-xs font-mono-tabular font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer min-w-[52px]"
+          className={`${isCompact ? 'px-1.5 h-7 text-[11px] min-w-[42px]' : 'px-2 h-8 text-xs min-w-[52px]'} rounded-lg font-mono-tabular font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer`}
         >
           {Math.round(zoom * 100)}%
         </button>
@@ -529,16 +585,16 @@ export const ToolDock: React.FC<ToolDockProps> = ({
           type="button"
           onClick={onZoomIn}
           title="Phóng to"
-          className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+          className={`${isCompact ? 'w-7 h-7' : 'w-8 h-8'} rounded-lg flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer`}
         >
-          <ZoomIn className="w-4 h-4" />
+          <ZoomIn className="w-3.5 h-3.5" />
         </button>
         <div className="w-px h-4 bg-slate-200 dark:bg-slate-700 mx-0.5" />
         <button
           type="button"
           onClick={onFitScreen}
           title="Vừa màn hình / Về tâm bảng"
-          className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+          className={`${isCompact ? 'w-7 h-7' : 'w-8 h-8'} rounded-lg flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer`}
         >
           <Maximize className="w-3.5 h-3.5" />
         </button>
