@@ -3,6 +3,7 @@ import {
   BookOpen,
   Copy,
   FilePlus,
+  FileText,
   FolderOpen,
   Search,
   Trash2,
@@ -20,6 +21,7 @@ interface NotebooksModalProps {
   onDuplicateNotebook: (doc: NotebookDocument) => void;
   onDeleteNotebook: (id: string) => void;
   onImportFile: () => void;
+  onImportPdf: () => void;
 }
 
 export const NotebooksModal: React.FC<NotebooksModalProps> = ({
@@ -32,6 +34,7 @@ export const NotebooksModal: React.FC<NotebooksModalProps> = ({
   onDuplicateNotebook,
   onDeleteNotebook,
   onImportFile,
+  onImportPdf,
 }) => {
   const [query, setQuery] = useState('');
 
@@ -72,7 +75,7 @@ export const NotebooksModal: React.FC<NotebooksModalProps> = ({
             />
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={onImportFile}
@@ -80,6 +83,14 @@ export const NotebooksModal: React.FC<NotebooksModalProps> = ({
             >
               <FolderOpen className="w-3.5 h-3.5" />
               Mở tệp (.scrbleweb / .inkboard)
+            </button>
+            <button
+              type="button"
+              onClick={onImportPdf}
+              className="h-9 px-3 rounded-lg border border-rose-200 dark:border-rose-800/70 bg-rose-50/70 dark:bg-rose-950/30 text-xs font-medium text-rose-700 dark:text-rose-300 hover:bg-rose-100/70 flex items-center gap-1.5 cursor-pointer"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              Nhập PDF
             </button>
             <button
               type="button"

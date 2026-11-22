@@ -4,7 +4,9 @@ import {
   ArrowUp,
   Copy,
   FilePlus2,
+  Lock,
   Trash2,
+  Unlock,
   X,
 } from 'lucide-react';
 import {
@@ -28,6 +30,7 @@ interface PagesDrawerProps {
   onChangeTemplate: (tpl: PaperTemplate) => void;
   onChangePageSize: (size: PageSizeMode) => void;
   onChangeGridSize: (gridSize: number) => void;
+  onToggleLockImages?: () => void;
 }
 
 export const PagesDrawer: React.FC<PagesDrawerProps> = ({
@@ -43,10 +46,13 @@ export const PagesDrawer: React.FC<PagesDrawerProps> = ({
   onChangeTemplate,
   onChangePageSize,
   onChangeGridSize,
+  onToggleLockImages,
 }) => {
   if (!open) return null;
 
   const activePage = pages.find((p) => p.id === activePageId) || pages[0];
+  const hasImages = activePage.elements.some((el) => el.type === 'image');
+  const hasLockedImages = activePage.elements.some((el) => el.type === 'image' && el.locked);
 
   return (
     <>
@@ -191,6 +197,25 @@ export const PagesDrawer: React.FC<PagesDrawerProps> = ({
                 className="w-full accent-blue-600 cursor-pointer"
               />
             </div>
+          )}
+          {hasImages && onToggleLockImages && (
+            <button
+              type="button"
+              onClick={onToggleLockImages}
+              className="w-full py-2 px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[11px] font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center justify-between cursor-pointer"
+            >
+              <span className="flex items-center gap-1.5">
+                {hasLockedImages ? (
+                  <Lock className="w-3.5 h-3.5 text-blue-600" />
+                ) : (
+                  <Unlock className="w-3.5 h-3.5 text-slate-500" />
+                )}
+                {hasLockedImages ? 'Đang khóa nền PDF/ảnh' : 'Khóa ảnh làm nền viết'}
+              </span>
+              <span className="text-[10px] text-blue-600 dark:text-blue-400">
+                {hasLockedImages ? 'Mở khóa' : 'Khóa'}
+              </span>
+            </button>
           )}
         </section>
 

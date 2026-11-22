@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { FilePlus2, FileText, Trash2, X } from 'lucide-react';
 import { BoardPage, PAGE_DIMENSIONS } from '../types/inkboard';
 import { drawTemplatePattern, getTemplateColors, renderElement } from '../utils/renderer';
@@ -16,6 +16,8 @@ interface PageTocSidebarProps {
 
 const PageThumbnailCanvas: React.FC<{ page: BoardPage }> = ({ page }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const imageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
+  const [thumbTick, setThumbTick] = useState(0);
 
   const dims =
     page.pageSize === 'infinite'
@@ -56,18 +58,14 @@ const PageThumbnailCanvas: React.FC<{ page: BoardPage }> = ({ page }) => {
       dims.height
     );
 
-    const imageCache = new Map<string, HTMLImageElement>();
     for (const el of page.elements) {
-      if (el.type === 'image') {
-        const img = new Image();
-        img.src = el.src;
-        if (img.complete) imageCache.set(el.src, img);
-      }
-      renderElement(ctx, el, imageCache);
+      renderElement(ctx, el, imageCacheRef.current, () => {
+        setThumbTick((t) => t + 1);
+      });
     }
     ctx.restore();
     ctx.restore();
-  }, [page, dims.width, dims.height, thumbW, thumbH]);
+  }, [page, dims.width, dims.height, thumbW, thumbH, thumbTick]);
 
   return (
     <canvas

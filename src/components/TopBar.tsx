@@ -88,6 +88,7 @@ interface TopBarProps {
   onOpenLibrary: () => void;
   onNewNotebook: () => void;
   onOpenFile: () => void;
+  onImportPdf: () => void;
   onSave: () => void;
   onOpenSaveAs: () => void;
   onOpenWebLink: () => void;
@@ -138,6 +139,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   onOpenLibrary,
   onNewNotebook,
   onOpenFile,
+  onImportPdf,
   onSave,
   onOpenSaveAs,
   onOpenWebLink,
@@ -488,6 +490,20 @@ export const TopBar: React.FC<TopBarProps> = ({
                   Mở tệp (.scrbleweb / .inkboard)...
                 </span>
                 <span className="text-[11px] font-mono-tabular text-slate-400">Ctrl+O</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setFileMenuOpen(false);
+                  onImportPdf();
+                }}
+                className="w-full px-3.5 py-2 text-left text-xs font-medium text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 flex items-center justify-between cursor-pointer"
+              >
+                <span className="flex items-center gap-2.5">
+                  <FileText className="w-4 h-4 text-rose-500" />
+                  Nhập tài liệu PDF (.pdf)...
+                </span>
               </button>
 
               <div className="my-1 border-t border-slate-100 dark:border-slate-800" />

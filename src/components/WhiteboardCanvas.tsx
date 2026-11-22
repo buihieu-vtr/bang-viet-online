@@ -865,7 +865,9 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
           offsetX: offX,
           offsetY: offY,
         };
-        const filtered = targetPage.elements.filter((el) => !hitTestElement(el, localPt, 10));
+        const filtered = targetPage.elements.filter(
+          (el) => (el.type === 'image' && el.locked) || !hitTestElement(el, localPt, 10)
+        );
         setLiveElements({
           pageId: targetPage.id,
           items: filtered.length !== targetPage.elements.length ? filtered : [...targetPage.elements],
@@ -986,7 +988,7 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
 
       const hit = [...targetPage.elements]
         .reverse()
-        .find((el) => hitTestElement(el, localPt, 8 / viewport.zoom));
+        .find((el) => !(el.type === 'image' && el.locked) && hitTestElement(el, localPt, 8 / viewport.zoom));
 
       if (hit) {
         if (e.shiftKey && targetPage.id === page.id) {
@@ -1159,7 +1161,7 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
       setLiveElements((prev) => ({
         pageId: mode.pageId,
         items: (prev?.pageId === mode.pageId ? prev.items : targetPage.elements).filter(
-          (el) => !hitTestElement(el, localPt, 10)
+          (el) => (el.type === 'image' && el.locked) || !hitTestElement(el, localPt, 10)
         ),
       }));
       return;
@@ -1329,6 +1331,7 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
       if (poly.length >= 3) {
         const matched = targetPage.elements
           .filter((el) => {
+            if (el.type === 'image' && el.locked) return false;
             if (el.type === 'stroke') {
               return el.points.some((p) => pointInPolygon(p, poly));
             }
@@ -1353,7 +1356,7 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
       if (width > 4 || height > 4) {
         const box = { x, y, width, height };
         const matched = targetPage.elements
-          .filter((el) => bboxesIntersect(getElementBBox(el), box))
+          .filter((el) => !(el.type === 'image' && el.locked) && bboxesIntersect(getElementBBox(el), box))
           .map((e) => e.id);
         onSelectedIdsChange(matched);
       }

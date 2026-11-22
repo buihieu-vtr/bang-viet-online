@@ -6,6 +6,7 @@ import {
   Circle,
   Diamond,
   Eraser,
+  FileText,
   Flame,
   Grid3X3,
   Hand,
@@ -61,6 +62,7 @@ interface ToolDockProps {
   shapeStrokeWidth: number;
   onShapeStrokeWidthChange: (w: number) => void;
   onTriggerImageUpload: () => void;
+  onImportPdf: () => void;
   onInsertSticky: (bg: string, text: string) => void;
   onInsertMath: () => void;
   onInsertAxesPreset: () => void;
@@ -112,6 +114,7 @@ export const ToolDock: React.FC<ToolDockProps> = ({
   shapeStrokeWidth,
   onShapeStrokeWidthChange,
   onTriggerImageUpload,
+  onImportPdf,
   onInsertSticky,
   onInsertMath,
   onInsertAxesPreset,
@@ -558,6 +561,18 @@ export const ToolDock: React.FC<ToolDockProps> = ({
             >
               <ImagePlus className="w-4 h-4 text-blue-600" />
               Chèn hình ảnh (PNG/JPG/SVG)
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setOpenMenu(null);
+                onImportPdf();
+              }}
+              className="w-full px-2.5 py-2 rounded-lg text-left text-xs font-medium text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 flex items-center gap-2.5 cursor-pointer"
+            >
+              <FileText className="w-4 h-4 text-rose-500" />
+              Nhập tài liệu PDF (.pdf)
             </button>
 
             <button

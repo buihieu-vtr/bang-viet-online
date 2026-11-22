@@ -7,6 +7,7 @@ import { InsertMathModal } from './components/InsertMathModal';
 import { NotebooksModal } from './components/NotebooksModal';
 import { PagesDrawer } from './components/PagesDrawer';
 import { PageTocSidebar } from './components/PageTocSidebar';
+import { PdfImportModal } from './components/PdfImportModal';
 import { SaveAsModal } from './components/SaveAsModal';
 import { ToolDock } from './components/ToolDock';
 import { TopBar } from './components/TopBar';
@@ -44,6 +45,14 @@ import {
   syncUserProfileOnLogin,
 } from './utils/cloudSync';
 import { uid } from './utils/geometry';
+import {
+  buildBoardPagesFromPdf,
+  buildImageElementsFromPdf,
+  inspectPdfFile,
+  LoadedPdfInfo,
+  PdfImportMode,
+  renderPdfPages,
+} from './utils/pdfImport';
 import { isDarkBoardTemplate } from './utils/renderer';
 import {
   createBlankNotebook,
@@ -113,6 +122,7 @@ export default function App() {
   const [webLinkOpen, setWebLinkOpen] = useState<boolean>(false);
   const [helpOpen, setHelpOpen] = useState<boolean>(false);
   const [mathModalOpen, setMathModalOpen] = useState<boolean>(false);
+  const [pdfImportInfo, setPdfImportInfo] = useState<LoadedPdfInfo | null>(null);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [isCompactViewport, setIsCompactViewport] = useState<boolean>(() =>
     typeof window !== 'undefined'
@@ -158,6 +168,7 @@ export default function App() {
 
   const imageInputRef = useRef<HTMLInputElement>(null);
   const inkboardInputRef = useRef<HTMLInputElement>(null);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
   const saveTimerRef = useRef<number | null>(null);
   const hashConsumedRef = useRef(false);
 
@@ -589,6 +600,30 @@ export default function App() {
     [ownerScope, showToast, syncPaletteForTemplate]
   );
 
+  const openPdfFileForImport = useCallback(
+    async (file: File) => {
+      try {
+        showToast('Đang đọc tệp PDF...');
+        const info = await inspectPdfFile(file);
+        setPdfImportInfo(info);
+      } catch {
+        showToast('Không thể mở tệp PDF này (tệp bị hỏng hoặc có mật khẩu).');
+      }
+    },
+    [showToast]
+  );
+
+  const handleImportPdfTrigger = useCallback(() => {
+    pdfInputRef.current?.click();
+  }, []);
+
+  const handlePdfFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    await openPdfFileForImport(file);
+  };
+
   const handleOpenFileTrigger = useCallback(() => {
     inkboardInputRef.current?.click();
   }, []);
@@ -597,6 +632,13 @@ export default function App() {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
+    if (
+      file.type === 'application/pdf' ||
+      file.name.toLowerCase().endsWith('.pdf')
+    ) {
+      await openPdfFileForImport(file);
+      return;
+    }
     try {
       const text = await file.text();
       await importNotebookText(text, file.name);
@@ -798,12 +840,90 @@ export default function App() {
     setActiveTool('select');
   };
 
+  const handleConfirmPdfImport = async ({
+    mode,
+    pageNumbers,
+    lockBackground,
+    notebookTitle,
+    onProgress,
+    signal,
+  }: {
+    mode: PdfImportMode;
+    pageNumbers: number[];
+    lockBackground: boolean;
+    notebookTitle: string;
+    onProgress: (done: number, total: number) => void;
+    signal: AbortSignal;
+  }) => {
+    if (!pdfImportInfo) return;
+    const rendered = await renderPdfPages(pdfImportInfo.pdfDoc, pageNumbers, {
+      onProgress,
+      signal,
+    });
+    if (rendered.length === 0) return;
+
+    if (mode === 'newNotebook') {
+      const newPages = buildBoardPagesFromPdf(rendered, lockBackground);
+      const nb: NotebookDocument = {
+        id: uid('nb'),
+        ownerId: ownerScope,
+        title: notebookTitle || pdfImportInfo.title,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        activePageId: newPages[0].id,
+        pages: newPages,
+        version: 1,
+      };
+      await saveNotebookToDB(nb, ownerScope);
+      await setLastActiveNotebookId(nb.id, ownerScope);
+      setDoc(nb);
+      setNotebooks((prev) => [nb, ...prev.filter((n) => n.id !== nb.id)]);
+      setLinkedFileHandle(null);
+      window.history.replaceState(null, '', window.location.pathname);
+      setSelectedIds([]);
+      syncPaletteForTemplate('blank');
+      if (window.innerWidth >= 768) {
+        setTocOpen(true);
+      }
+      window.setTimeout(() => triggerScrollToPage(newPages[0].id), 60);
+      showToast(`Đã nhập ${rendered.length} trang PDF vào bảng viết mới`);
+    } else if (mode === 'appendPages') {
+      const newPages = buildBoardPagesFromPdf(rendered, lockBackground);
+      const nextPages = [...doc.pages, ...newPages];
+      setDoc((prev) => ({
+        ...prev,
+        updatedAt: Date.now(),
+        activePageId: newPages[0].id,
+        pages: nextPages,
+      }));
+      setSelectedIds([]);
+      if (window.innerWidth >= 768) {
+        setTocOpen(true);
+      }
+      window.setTimeout(() => triggerScrollToPage(newPages[0].id), 60);
+      showToast(`Đã thêm ${rendered.length} trang PDF vào bảng hiện tại`);
+    } else {
+      const center = getLocalPageCenter();
+      const imgs = buildImageElementsFromPdf(rendered, center, lockBackground);
+      handleCommitElements([...activePage.elements, ...imgs]);
+      if (!lockBackground) {
+        setSelectedIds(imgs.map((i) => i.id));
+        setActiveTool('select');
+      } else {
+        setSelectedIds([]);
+      }
+      showToast(`Đã chèn ${rendered.length} trang PDF vào trang hiện tại`);
+    }
+  };
+
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     const file = e.dataTransfer.files?.[0];
     if (!file) return;
     const lowerName = file.name.toLowerCase();
-    if (file.type.startsWith('image/')) {
+    if (file.type === 'application/pdf' || lowerName.endsWith('.pdf')) {
+      openPdfFileForImport(file);
+    } else if (file.type.startsWith('image/')) {
       const reader = new FileReader();
       reader.onload = () => {
         if (typeof reader.result === 'string') insertImageDataUrl(reader.result);
@@ -1021,6 +1141,7 @@ export default function App() {
           showToast('Đã tạo bảng viết mới');
         }}
         onOpenFile={handleOpenFileTrigger}
+        onImportPdf={handleImportPdfTrigger}
         onSave={handleSave}
         onOpenSaveAs={() => setSaveAsOpen(true)}
         onOpenWebLink={() => setWebLinkOpen(true)}
@@ -1116,6 +1237,7 @@ export default function App() {
             shapeStrokeWidth={shapeStrokeWidth}
             onShapeStrokeWidthChange={setShapeStrokeWidth}
             onTriggerImageUpload={() => imageInputRef.current?.click()}
+            onImportPdf={handleImportPdfTrigger}
             onInsertSticky={handleInsertSticky}
             onInsertMath={() => setMathModalOpen(true)}
             onInsertAxesPreset={() => handleInsertPresetShape('axes')}
@@ -1241,6 +1363,23 @@ export default function App() {
           onChangeGridSize={(gridSize: number) => {
             updateActivePage((p) => ({ ...p, gridSize }));
           }}
+          onToggleLockImages={() => {
+            const hasLocked = activePage.elements.some(
+              (el) => el.type === 'image' && el.locked
+            );
+            updateActivePage((p) => ({
+              ...p,
+              elements: p.elements.map((el) =>
+                el.type === 'image' ? { ...el, locked: !hasLocked } : el
+              ),
+            }));
+            setSelectedIds([]);
+            showToast(
+              hasLocked
+                ? 'Đã mở khóa ảnh nền (có thể chọn để di chuyển/xóa)'
+                : 'Đã khóa ảnh làm nền viết'
+            );
+          }}
         />
       </div>
 
@@ -1255,8 +1394,15 @@ export default function App() {
       <input
         ref={inkboardInputRef}
         type="file"
-        accept=".inkboard,.scrbleweb,.json"
+        accept=".inkboard,.scrbleweb,.json,.pdf"
         onChange={handleImportFileFallback}
+        className="hidden"
+      />
+      <input
+        ref={pdfInputRef}
+        type="file"
+        accept="application/pdf,.pdf"
+        onChange={handlePdfFileSelect}
         className="hidden"
       />
 
@@ -1355,6 +1501,20 @@ export default function App() {
           setLibraryOpen(false);
           handleOpenFileTrigger();
         }}
+        onImportPdf={() => {
+          setLibraryOpen(false);
+          handleImportPdfTrigger();
+        }}
+      />
+
+      <PdfImportModal
+        open={Boolean(pdfImportInfo)}
+        pdfInfo={pdfImportInfo}
+        onClose={() => {
+          pdfImportInfo?.pdfDoc.cleanup();
+          setPdfImportInfo(null);
+        }}
+        onConfirmImport={handleConfirmPdfImport}
       />
 
       <SaveAsModal
