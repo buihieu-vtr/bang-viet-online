@@ -94,6 +94,11 @@ interface PageLayout {
 
 const PAGE_GAP = 48;
 
+const PEN_CURSOR_SVG = encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18"><path d="M2 16 L4.0 11.4 L12.6 2.8 C13.2 2.2 14.1 2.2 14.7 2.8 L15.2 3.3 C15.8 3.9 15.8 4.8 15.2 5.4 L6.6 14.0 Z" fill="#1E293B" stroke="#FFFFFF" stroke-width="1.6" stroke-linejoin="round"/><path d="M4.0 11.4 L6.6 14.0 L4.3 15.1 L2.9 13.7 Z" fill="#F8FAFC" stroke="#1E293B" stroke-width="0.7" stroke-linejoin="round"/><path d="M2 16 L2.9 13.7 L4.3 15.1 Z" fill="#0F172A"/><path d="M11.1 4.3 L13.7 6.9" stroke="#38BDF8" stroke-width="1.4" stroke-linecap="round"/></svg>`
+);
+const PEN_SVG_CURSOR = `url("data:image/svg+xml,${PEN_CURSOR_SVG}") 2 16, crosshair`;
+
 type InteractionMode =
   | { type: 'none' }
   | { type: 'pan'; startScreenX: number; startScreenY: number; origOffsetX: number; origOffsetY: number }
@@ -104,6 +109,9 @@ type InteractionMode =
       offsetY: number;
       stroke: StrokeItem;
       rulerSnapped: boolean;
+      lastRaw: { x: number; y: number };
+      lastRawTime: number;
+      lastPressure: number;
     }
   | {
       type: 'shape';
@@ -185,16 +193,19 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const imageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
   const laserPointsRef = useRef<LaserPoint[]>([]);
+  const laserRafRef = useRef<number>(0);
   const interactionRef = useRef<InteractionMode>({ type: 'none' });
+  const liveDrawStrokeRef = useRef<{ pageId: string; stroke: StrokeItem } | null>(null);
+  const liveShapeRef = useRef<{ pageId: string; shape: ShapeItem } | null>(null);
+  const lassoPointsRef = useRef<{ offsetX: number; offsetY: number; points: { x: number; y: number }[] } | null>(null);
+  const boxSelectRectRef = useRef<{ offsetX: number; offsetY: number; box: BBox } | null>(null);
+  const cursorWorldRef = useRef<{ x: number; y: number } | null>(null);
+  const cursorPointerTypeRef = useRef<string>('mouse');
   const [liveElements, setLiveElements] = useState<{ pageId: string; items: BoardElement[] } | null>(null);
-  const [liveDrawStroke, setLiveDrawStroke] = useState<{ pageId: string; stroke: StrokeItem } | null>(null);
-  const [liveShape, setLiveShape] = useState<{ pageId: string; shape: ShapeItem } | null>(null);
-  const [lassoPoints, setLassoPoints] = useState<{ offsetX: number; offsetY: number; points: { x: number; y: number }[] } | null>(null);
-  const [boxSelectRect, setBoxSelectRect] = useState<{ offsetX: number; offsetY: number; box: BBox } | null>(null);
   const [spacePressed, setSpacePressed] = useState(false);
-  const [cursorWorld, setCursorWorld] = useState<{ x: number; y: number } | null>(null);
   const [editingText, setEditingText] = useState<{ pageId: string; elementId: string } | null>(null);
   const [editingDraft, setEditingDraft] = useState('');
   const [canvasSize, setCanvasSize] = useState({ width: 1200, height: 800 });
@@ -433,7 +444,7 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
     };
   }, [page.id, page.elements, selectedIds, onCommitPageElements, onSelectedIdsChange]);
 
-  // Main high-DPI Canvas render pass
+  // Main static high-DPI Canvas render pass (background + committed elements only)
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -475,13 +486,7 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
           setRenderTick((t) => t + 1);
         });
       }
-
-      if (liveDrawStroke && liveDrawStroke.pageId === page.id) {
-        renderStroke(ctx, liveDrawStroke.stroke);
-      }
-      if (liveShape && liveShape.pageId === page.id) {
-        renderShape(ctx, liveShape.shape);
-      }
+      ctx.restore();
     } else {
       // Multi-Page Vertical Scroll Mode (A4 Portrait / A4 Landscape / 16:9 Slide)
       ctx.fillStyle = darkMode ? '#0F1115' : '#E5EAEF';
@@ -516,7 +521,7 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
         // Realistic board/paper surface
         drawRealisticBoardSurface(ctx, L.page.template, 0, 0, L.width, L.height);
 
-        // Clipped template pattern + elements + live strokes
+        // Clipped template pattern + committed elements
         ctx.save();
         ctx.beginPath();
         ctx.rect(0, 0, L.width, L.height);
@@ -550,13 +555,6 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
             setRenderTick((t) => t + 1);
           });
         }
-
-        if (liveDrawStroke && liveDrawStroke.pageId === L.page.id) {
-          renderStroke(ctx, liveDrawStroke.stroke);
-        }
-        if (liveShape && liveShape.pageId === L.page.id) {
-          renderShape(ctx, liveShape.shape);
-        }
         ctx.restore();
 
         // Page frame / active highlight border
@@ -587,72 +585,9 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
 
         ctx.restore();
       }
-    }
-
-    // Lasso overlay (stored in page-local coords + offset)
-    if (lassoPoints && lassoPoints.points.length > 1) {
-      ctx.save();
-      ctx.translate(lassoPoints.offsetX, lassoPoints.offsetY);
-      ctx.strokeStyle = '#2563EB';
-      ctx.fillStyle = 'rgba(37, 99, 235, 0.08)';
-      ctx.lineWidth = 1.5 / viewport.zoom;
-      ctx.setLineDash([6 / viewport.zoom, 4 / viewport.zoom]);
-      ctx.beginPath();
-      ctx.moveTo(lassoPoints.points[0].x, lassoPoints.points[0].y);
-      for (let i = 1; i < lassoPoints.points.length; i++) {
-        ctx.lineTo(lassoPoints.points[i].x, lassoPoints.points[i].y);
-      }
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
       ctx.restore();
     }
 
-    // Box select overlay
-    if (boxSelectRect) {
-      ctx.save();
-      ctx.translate(boxSelectRect.offsetX, boxSelectRect.offsetY);
-      ctx.strokeStyle = '#2563EB';
-      ctx.fillStyle = 'rgba(37, 99, 235, 0.08)';
-      ctx.lineWidth = 1.5 / viewport.zoom;
-      ctx.strokeRect(
-        boxSelectRect.box.x,
-        boxSelectRect.box.y,
-        boxSelectRect.box.width,
-        boxSelectRect.box.height
-      );
-      ctx.fillRect(
-        boxSelectRect.box.x,
-        boxSelectRect.box.y,
-        boxSelectRect.box.width,
-        boxSelectRect.box.height
-      );
-      ctx.restore();
-    }
-
-    // Eraser cursor ring (world space)
-    if (activeTool === 'eraser' && cursorWorld) {
-      ctx.save();
-      ctx.strokeStyle = eraserMode === 'stroke' ? '#EF4444' : '#3B82F6';
-      ctx.fillStyle =
-        eraserMode === 'stroke'
-          ? 'rgba(239, 68, 68, 0.08)'
-          : 'rgba(59, 130, 246, 0.08)';
-      ctx.lineWidth = 1.5 / viewport.zoom;
-      const r = eraserMode === 'stroke' ? 12 / viewport.zoom : eraserSize / 2;
-      ctx.beginPath();
-      ctx.arc(cursorWorld.x, cursorWorld.y, r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-      ctx.restore();
-    }
-
-    // Laser pointer trail (world space)
-    if (laserPointsRef.current.length > 0) {
-      renderLaserTrail(ctx, laserPointsRef.current, performance.now());
-    }
-
-    ctx.restore();
     ctx.restore();
   }, [
     isPagedMode,
@@ -663,37 +598,180 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
     darkMode,
     displayedActiveElements,
     liveElements,
-    liveDrawStroke,
-    liveShape,
-    lassoPoints,
-    boxSelectRect,
-    activeTool,
-    eraserMode,
-    eraserSize,
-    cursorWorld,
     editingText,
     renderTick,
   ]);
 
-  // Laser animation ticker
+  // Imperative zero-latency overlay canvas render pass (active stroke, shape, lasso, box select, eraser ring, stylus nib, laser trail)
+  const drawOverlay = useCallback(() => {
+    const overlay = overlayCanvasRef.current;
+    if (!overlay) return;
+    const dpr = window.devicePixelRatio || 1;
+    const targetW = Math.round(canvasSize.width * dpr);
+    const targetH = Math.round(canvasSize.height * dpr);
+
+    if (overlay.width !== targetW || overlay.height !== targetH) {
+      overlay.width = targetW;
+      overlay.height = targetH;
+    }
+
+    const ctx = overlay.getContext('2d');
+    if (!ctx) return;
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+    const liveDraw = liveDrawStrokeRef.current;
+    const liveSh = liveShapeRef.current;
+    const lasso = lassoPointsRef.current;
+    const boxRect = boxSelectRectRef.current;
+    const curWorld = cursorWorldRef.current;
+    const isPenHover =
+      cursorPointerTypeRef.current === 'pen' &&
+      (activeTool === 'pen' || activeTool === 'pencil' || activeTool === 'highlighter');
+    const hasLaser = laserPointsRef.current.length > 0;
+
+    if (!liveDraw && !liveSh && !lasso && !boxRect && !(activeTool === 'eraser' && curWorld) && !(isPenHover && curWorld) && !hasLaser) {
+      return;
+    }
+
+    ctx.save();
+    ctx.scale(dpr, dpr);
+    ctx.translate(viewport.offsetX, viewport.offsetY);
+    ctx.scale(viewport.zoom, viewport.zoom);
+
+    if (liveDraw) {
+      if (isPagedMode) {
+        const L = pageLayouts.find((pl) => pl.page.id === liveDraw.pageId);
+        if (L) {
+          ctx.save();
+          ctx.translate(L.x, L.topY);
+          ctx.beginPath();
+          ctx.rect(0, 0, L.width, L.height);
+          ctx.clip();
+          renderStroke(ctx, liveDraw.stroke);
+          ctx.restore();
+        }
+      } else {
+        renderStroke(ctx, liveDraw.stroke);
+      }
+    }
+
+    if (liveSh) {
+      if (isPagedMode) {
+        const L = pageLayouts.find((pl) => pl.page.id === liveSh.pageId);
+        if (L) {
+          ctx.save();
+          ctx.translate(L.x, L.topY);
+          ctx.beginPath();
+          ctx.rect(0, 0, L.width, L.height);
+          ctx.clip();
+          renderShape(ctx, liveSh.shape);
+          ctx.restore();
+        }
+      } else {
+        renderShape(ctx, liveSh.shape);
+      }
+    }
+
+    if (lasso && lasso.points.length > 1) {
+      ctx.save();
+      ctx.translate(lasso.offsetX, lasso.offsetY);
+      ctx.strokeStyle = '#2563EB';
+      ctx.fillStyle = 'rgba(37, 99, 235, 0.08)';
+      ctx.lineWidth = 1.5 / viewport.zoom;
+      ctx.setLineDash([6 / viewport.zoom, 4 / viewport.zoom]);
+      ctx.beginPath();
+      ctx.moveTo(lasso.points[0].x, lasso.points[0].y);
+      for (let i = 1; i < lasso.points.length; i++) {
+        ctx.lineTo(lasso.points[i].x, lasso.points[i].y);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    if (boxRect) {
+      ctx.save();
+      ctx.translate(boxRect.offsetX, boxRect.offsetY);
+      ctx.strokeStyle = '#2563EB';
+      ctx.fillStyle = 'rgba(37, 99, 235, 0.08)';
+      ctx.lineWidth = 1.5 / viewport.zoom;
+      ctx.strokeRect(boxRect.box.x, boxRect.box.y, boxRect.box.width, boxRect.box.height);
+      ctx.fillRect(boxRect.box.x, boxRect.box.y, boxRect.box.width, boxRect.box.height);
+      ctx.restore();
+    }
+
+    if (activeTool === 'eraser' && curWorld) {
+      ctx.save();
+      ctx.strokeStyle = eraserMode === 'stroke' ? '#EF4444' : '#3B82F6';
+      ctx.fillStyle =
+        eraserMode === 'stroke' ? 'rgba(239, 68, 68, 0.08)' : 'rgba(59, 130, 246, 0.08)';
+      ctx.lineWidth = 1.5 / viewport.zoom;
+      const r = eraserMode === 'stroke' ? 12 / viewport.zoom : eraserSize / 2;
+      ctx.beginPath();
+      ctx.arc(curWorld.x, curWorld.y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    } else if (isPenHover && curWorld) {
+      ctx.save();
+      const nibR = Math.max(2.2 / viewport.zoom, activePenSlot.width * 0.45);
+      ctx.beginPath();
+      ctx.arc(curWorld.x, curWorld.y, nibR, 0, Math.PI * 2);
+      ctx.fillStyle = activePenSlot.color;
+      ctx.fill();
+      ctx.lineWidth = 1.2 / viewport.zoom;
+      ctx.strokeStyle = '#FFFFFF';
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    if (hasLaser) {
+      renderLaserTrail(ctx, laserPointsRef.current, performance.now());
+    }
+
+    ctx.restore();
+  }, [
+    canvasSize,
+    viewport,
+    isPagedMode,
+    pageLayouts,
+    activeTool,
+    eraserMode,
+    eraserSize,
+    activePenSlot,
+  ]);
+
+  const drawOverlayRef = useRef(drawOverlay);
   useEffect(() => {
-    let rafId = 0;
+    drawOverlayRef.current = drawOverlay;
+    drawOverlay();
+  }, [drawOverlay]);
+
+  const startLaserLoop = useCallback(() => {
+    if (laserRafRef.current) return;
     const tick = () => {
       const now = performance.now();
-      const active = laserPointsRef.current.filter((p) => now - p.t < 1150);
-      if (active.length !== laserPointsRef.current.length) {
-        laserPointsRef.current = active;
-      }
-      if (active.length > 0) {
-        setRenderTick((t) => (t + 1) % 100000);
-        rafId = requestAnimationFrame(tick);
+      laserPointsRef.current = laserPointsRef.current.filter((p) => now - p.t < 1150);
+      drawOverlayRef.current();
+      if (laserPointsRef.current.length > 0) {
+        laserRafRef.current = requestAnimationFrame(tick);
+      } else {
+        laserRafRef.current = 0;
       }
     };
-    if (laserPointsRef.current.length > 0) {
-      rafId = requestAnimationFrame(tick);
-    }
-    return () => cancelAnimationFrame(rafId);
-  });
+    laserRafRef.current = requestAnimationFrame(tick);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (laserRafRef.current) {
+        cancelAnimationFrame(laserRafRef.current);
+      }
+    };
+  }, []);
 
   // Wheel zoom / vertical scroll in Paged Mode
   const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
@@ -782,12 +860,13 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
           lastMidX: (p1.x + p2.x) / 2,
           lastMidY: (p1.y + p2.y) / 2,
         };
-        if (interactionRef.current.type === 'draw') setLiveDrawStroke(null);
-        if (interactionRef.current.type === 'shape') setLiveShape(null);
+        if (interactionRef.current.type === 'draw') liveDrawStrokeRef.current = null;
+        if (interactionRef.current.type === 'shape') liveShapeRef.current = null;
         setLiveElements(null);
-        setLassoPoints(null);
-        setBoxSelectRect(null);
+        lassoPointsRef.current = null;
+        boxSelectRectRef.current = null;
         interactionRef.current = { type: 'none' };
+        drawOverlay();
         return;
       }
     }
@@ -795,7 +874,8 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
     const isPalmTouch = stylusOnly && e.pointerType === 'touch';
 
     const pt = screenToWorld(e.clientX, e.clientY);
-    setCursorWorld(pt);
+    cursorWorldRef.current = pt;
+    cursorPointerTypeRef.current = e.pointerType;
 
     if (e.button === 1 || spacePressed || activeTool === 'pan' || isPalmTouch) {
       interactionRef.current = {
@@ -812,7 +892,8 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
 
     if (activeTool === 'laser') {
       laserPointsRef.current.push({ x: pt.x, y: pt.y, t: performance.now() });
-      setRenderTick((t) => t + 1);
+      drawOverlay();
+      startLaserLoop();
       return;
     }
 
@@ -831,7 +912,8 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
       const snap = snapPointToRuler(pt.x, pt.y, ruler);
       const localX = snap.x - offX;
       const localY = snap.y - offY;
-      const pressure = e.pointerType === 'pen' && e.pressure > 0 ? e.pressure : 0.5;
+      const pressure = e.pointerType === 'pen' && e.pressure > 0 ? e.pressure : 0.52;
+      const nowTs = e.nativeEvent.timeStamp || performance.now();
       const stroke: StrokeItem = {
         id: uid('stroke'),
         type: 'stroke',
@@ -849,9 +931,15 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
         offsetY: offY,
         stroke,
         rulerSnapped: snap.snapped,
+        lastRaw: { x: localX, y: localY },
+        lastRawTime: nowTs,
+        lastPressure: pressure,
       };
-      setLiveDrawStroke({ pageId: targetPage.id, stroke });
-      onSelectedIdsChange([]);
+      liveDrawStrokeRef.current = { pageId: targetPage.id, stroke };
+      drawOverlay();
+      if (selectedIds.length > 0) {
+        onSelectedIdsChange([]);
+      }
       return;
     }
 
@@ -921,8 +1009,11 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
         startX: localPt.x,
         startY: localPt.y,
       };
-      setLiveShape({ pageId: targetPage.id, shape });
-      onSelectedIdsChange([]);
+      liveShapeRef.current = { pageId: targetPage.id, shape };
+      drawOverlay();
+      if (selectedIds.length > 0) {
+        onSelectedIdsChange([]);
+      }
       return;
     }
 
@@ -1012,7 +1103,9 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
         return;
       }
 
-      onSelectedIdsChange([]);
+      if (selectedIds.length > 0) {
+        onSelectedIdsChange([]);
+      }
       if (selectMode === 'lasso') {
         interactionRef.current = {
           type: 'lasso',
@@ -1021,7 +1114,8 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
           offsetY: offY,
           points: [localPt],
         };
-        setLassoPoints({ offsetX: offX, offsetY: offY, points: [localPt] });
+        lassoPointsRef.current = { offsetX: offX, offsetY: offY, points: [localPt] };
+        drawOverlay();
       } else {
         interactionRef.current = {
           type: 'boxSelect',
@@ -1033,11 +1127,12 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
           curX: localPt.x,
           curY: localPt.y,
         };
-        setBoxSelectRect({
+        boxSelectRectRef.current = {
           offsetX: offX,
           offsetY: offY,
           box: { x: localPt.x, y: localPt.y, width: 0, height: 0 },
-        });
+        };
+        drawOverlay();
       }
     }
   };
@@ -1087,16 +1182,27 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
     }
 
     const pt = screenToWorld(e.clientX, e.clientY);
-    setCursorWorld(pt);
+    cursorWorldRef.current = pt;
+    cursorPointerTypeRef.current = e.pointerType;
 
     if (activeTool === 'laser' && e.buttons > 0) {
       laserPointsRef.current.push({ x: pt.x, y: pt.y, t: performance.now() });
-      setRenderTick((t) => t + 1);
+      drawOverlay();
+      startLaserLoop();
       return;
     }
 
     const mode = interactionRef.current;
-    if (mode.type === 'none') return;
+    if (mode.type === 'none') {
+      if (
+        activeTool === 'eraser' ||
+        (e.pointerType === 'pen' &&
+          (activeTool === 'pen' || activeTool === 'pencil' || activeTool === 'highlighter'))
+      ) {
+        drawOverlay();
+      }
+      return;
+    }
 
     if (mode.type === 'pan') {
       const dx = e.clientX - mode.startScreenX;
@@ -1118,22 +1224,61 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
     const localPt = { x: pt.x - mode.offsetX, y: pt.y - mode.offsetY };
 
     if (mode.type === 'draw') {
-      const snap = snapPointToRuler(pt.x, pt.y, ruler);
-      const nextPt: Point = {
-        x: snap.x - mode.offsetX,
-        y: snap.y - mode.offsetY,
-        pressure: e.pointerType === 'pen' && e.pressure > 0 ? e.pressure : 0.5,
-        t: Date.now(),
-      };
-      const pts = mode.stroke.points;
-      const last = pts[pts.length - 1];
-      if (!last || dist(last, nextPt) >= 1.5) {
-        const updated: StrokeItem = {
-          ...mode.stroke,
-          points: [...pts, nextPt],
-        };
-        mode.stroke = updated;
-        setLiveDrawStroke({ pageId: mode.pageId, stroke: updated });
+      const nativeEv = e.nativeEvent as PointerEvent;
+      const coalesced =
+        typeof nativeEv.getCoalescedEvents === 'function'
+          ? nativeEv.getCoalescedEvents()
+          : [];
+      const evList = coalesced.length > 0 ? coalesced : [nativeEv];
+      const rect = canvasRef.current?.getBoundingClientRect();
+      const minStepWorld = Math.max(0.85, 1.4 / viewport.zoom);
+      let addedAny = false;
+
+      for (const ce of evList) {
+        const sx = ce.clientX - (rect?.left ?? 0);
+        const sy = ce.clientY - (rect?.top ?? 0);
+        const wx = (sx - viewport.offsetX) / viewport.zoom;
+        const wy = (sy - viewport.offsetY) / viewport.zoom;
+        const snap = snapPointToRuler(wx, wy, ruler);
+        const rawX = snap.x - mode.offsetX;
+        const rawY = snap.y - mode.offsetY;
+        const stepDist = Math.hypot(rawX - mode.lastRaw.x, rawY - mode.lastRaw.y);
+        if (stepDist < minStepWorld) continue;
+
+        const ts = ce.timeStamp || performance.now();
+        const dt = Math.max(1, ts - mode.lastRawTime);
+        const speed = stepDist / dt;
+
+        let p: number;
+        if (ce.pointerType === 'pen' && ce.pressure > 0) {
+          p = mode.lastPressure * 0.5 + ce.pressure * 0.5;
+        } else {
+          const targetP = 0.58 - Math.min(1, speed / 2.2) * 0.18;
+          p = mode.lastPressure * 0.65 + targetP * 0.35;
+        }
+
+        const pts = mode.stroke.points;
+        const last = pts[pts.length - 1];
+        const smoothX = !snap.snapped && last ? last.x * 0.36 + rawX * 0.64 : rawX;
+        const smoothY = !snap.snapped && last ? last.y * 0.36 + rawY * 0.64 : rawY;
+
+        pts.push({
+          x: smoothX,
+          y: smoothY,
+          pressure: p,
+          t: Date.now(),
+        });
+
+        mode.lastRaw = { x: rawX, y: rawY };
+        mode.lastRawTime = ts;
+        mode.lastPressure = p;
+        cursorWorldRef.current = { x: wx, y: wy };
+        addedAny = true;
+      }
+
+      if (addedAny) {
+        liveDrawStrokeRef.current = { pageId: mode.pageId, stroke: mode.stroke };
+        drawOverlay();
       }
       return;
     }
@@ -1146,13 +1291,13 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
         w = w < 0 ? -s : s;
         h = h < 0 ? -s : s;
       }
-      const updated: ShapeItem = {
+      mode.shape = {
         ...mode.shape,
         width: w,
         height: h,
       };
-      mode.shape = updated;
-      setLiveShape({ pageId: mode.pageId, shape: updated });
+      liveShapeRef.current = { pageId: mode.pageId, shape: mode.shape };
+      drawOverlay();
       return;
     }
 
@@ -1164,6 +1309,7 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
           (el) => (el.type === 'image' && el.locked) || !hitTestElement(el, localPt, 10)
         ),
       }));
+      drawOverlay();
       return;
     }
 
@@ -1181,6 +1327,7 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
         }
         return { pageId: mode.pageId, items: next };
       });
+      drawOverlay();
       return;
     }
 
@@ -1188,7 +1335,8 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
       const last = mode.points[mode.points.length - 1];
       if (!last || dist(last, localPt) >= 5) {
         mode.points.push(localPt);
-        setLassoPoints({ offsetX: mode.offsetX, offsetY: mode.offsetY, points: [...mode.points] });
+        lassoPointsRef.current = { offsetX: mode.offsetX, offsetY: mode.offsetY, points: mode.points };
+        drawOverlay();
       }
       return;
     }
@@ -1200,11 +1348,12 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
       const y = Math.min(mode.startY, localPt.y);
       const width = Math.abs(localPt.x - mode.startX);
       const height = Math.abs(localPt.y - mode.startY);
-      setBoxSelectRect({
+      boxSelectRectRef.current = {
         offsetX: mode.offsetX,
         offsetY: mode.offsetY,
         box: { x, y, width, height },
-      });
+      };
+      drawOverlay();
       return;
     }
 
@@ -1291,6 +1440,19 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
 
     if (mode.type === 'draw') {
       const targetPage = pages.find((p) => p.id === mode.pageId) || page;
+      const pts = mode.stroke.points;
+      const lastPt = pts[pts.length - 1];
+      if (
+        lastPt &&
+        Math.hypot(mode.lastRaw.x - lastPt.x, mode.lastRaw.y - lastPt.y) >= 0.5
+      ) {
+        pts.push({
+          x: mode.lastRaw.x,
+          y: mode.lastRaw.y,
+          pressure: mode.lastPressure,
+          t: Date.now(),
+        });
+      }
       let added: BoardElement = mode.stroke;
       if (
         inkToShape &&
@@ -1302,14 +1464,16 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
           added = recognized;
         }
       }
-      setLiveDrawStroke(null);
+      liveDrawStrokeRef.current = null;
+      drawOverlay();
       onCommitPageElements(targetPage.id, [...targetPage.elements, added]);
       return;
     }
 
     if (mode.type === 'shape') {
       const targetPage = pages.find((p) => p.id === mode.pageId) || page;
-      setLiveShape(null);
+      liveShapeRef.current = null;
+      drawOverlay();
       if (Math.hypot(mode.shape.width, mode.shape.height) >= 8) {
         onCommitPageElements(targetPage.id, [...targetPage.elements, mode.shape]);
       }
@@ -1327,7 +1491,8 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
     if (mode.type === 'lasso') {
       const targetPage = pages.find((p) => p.id === mode.pageId) || page;
       const poly = mode.points;
-      setLassoPoints(null);
+      lassoPointsRef.current = null;
+      drawOverlay();
       if (poly.length >= 3) {
         const matched = targetPage.elements
           .filter((el) => {
@@ -1352,7 +1517,8 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
       const y = Math.min(mode.startY, mode.curY);
       const width = Math.abs(mode.curX - mode.startX);
       const height = Math.abs(mode.curY - mode.startY);
-      setBoxSelectRect(null);
+      boxSelectRectRef.current = null;
+      drawOverlay();
       if (width > 4 || height > 4) {
         const box = { x, y, width, height };
         const matched = targetPage.elements
@@ -1567,10 +1733,23 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
   const thumbTop = scrollProgress * (trackH - thumbH);
 
   let cursorClass = 'cursor-crosshair';
-  if (spacePressed || activeTool === 'pan') cursorClass = 'cursor-grab active:cursor-grabbing';
-  else if (activeTool === 'select') cursorClass = 'cursor-default';
-  else if (activeTool === 'text') cursorClass = 'cursor-text';
-  else if (activeTool === 'eraser') cursorClass = 'cursor-none';
+  let customCursorStyle: React.CSSProperties | undefined;
+  if (spacePressed || activeTool === 'pan') {
+    cursorClass = 'cursor-grab active:cursor-grabbing';
+  } else if (activeTool === 'select') {
+    cursorClass = 'cursor-default';
+  } else if (activeTool === 'text') {
+    cursorClass = 'cursor-text';
+  } else if (activeTool === 'eraser') {
+    cursorClass = 'cursor-none';
+  } else if (
+    activeTool === 'pen' ||
+    activeTool === 'pencil' ||
+    activeTool === 'highlighter'
+  ) {
+    cursorClass = '';
+    customCursorStyle = { cursor: PEN_SVG_CURSOR };
+  }
 
   return (
     <div
@@ -1584,8 +1763,18 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
+        onPointerLeave={() => {
+          cursorWorldRef.current = null;
+          drawOverlay();
+        }}
         onDoubleClick={handleDoubleClick}
+        style={customCursorStyle}
         className={`block w-full h-full touch-none-canvas ${cursorClass}`}
+      />
+
+      <canvas
+        ref={overlayCanvasRef}
+        className="pointer-events-none absolute inset-0 block w-full h-full"
       />
 
       {/* Right-Edge Interactive Scrollbar for Multi-Page A4 / Slide Mode */}

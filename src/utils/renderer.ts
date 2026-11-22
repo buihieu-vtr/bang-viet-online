@@ -384,6 +384,119 @@ function applyStrokeLineDash(
   }
 }
 
+function fillSmoothVariableInk(
+  ctx: CanvasRenderingContext2D,
+  rawPts: { x: number; y: number; pressure: number }[],
+  baseWidth: number,
+  isPen: boolean
+) {
+  if (rawPts.length === 0) return;
+  if (rawPts.length === 1) {
+    const r = Math.max(0.8, (baseWidth * (0.72 + (rawPts[0].pressure || 0.5) * 0.45)) / 2);
+    ctx.beginPath();
+    ctx.arc(rawPts[0].x, rawPts[0].y, r, 0, Math.PI * 2);
+    ctx.fill();
+    return;
+  }
+  if (rawPts.length === 2) {
+    const pAvg = ((rawPts[0].pressure || 0.5) + (rawPts[1].pressure || 0.5)) / 2;
+    ctx.lineWidth = Math.max(0.8, baseWidth * (0.75 + pAvg * 0.45));
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(rawPts[0].x, rawPts[0].y);
+    ctx.lineTo(rawPts[1].x, rawPts[1].y);
+    ctx.stroke();
+    return;
+  }
+
+  // Light spatial decimation prevents bunched micro-points from twisting normals on fast loops
+  const minStep = Math.max(1.2, baseWidth * 0.24);
+  const pts: { x: number; y: number; pressure: number }[] = [rawPts[0]];
+  for (let i = 1; i < rawPts.length - 1; i++) {
+    const prev = pts[pts.length - 1];
+    const cur = rawPts[i];
+    if (Math.hypot(cur.x - prev.x, cur.y - prev.y) >= minStep) {
+      pts.push(cur);
+    }
+  }
+  pts.push(rawPts[rawPts.length - 1]);
+
+  if (pts.length <= 2) {
+    ctx.lineWidth = Math.max(0.8, baseWidth);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
+    ctx.stroke();
+    return;
+  }
+
+  const n = pts.length;
+  const radii: number[] = new Array(n);
+  let prevR = Math.max(
+    0.45,
+    (baseWidth * (isPen ? 0.68 + (pts[0].pressure || 0.5) * 0.56 : 0.78 + (pts[0].pressure || 0.5) * 0.36)) / 2
+  );
+  for (let i = 0; i < n; i++) {
+    const p = pts[i].pressure || 0.5;
+    const factor = isPen ? 0.68 + p * 0.56 : 0.78 + p * 0.36;
+    const targetR = Math.max(0.45, (baseWidth * factor) / 2);
+    prevR = prevR * 0.55 + targetR * 0.45;
+    radii[i] = prevR;
+  }
+
+  const left: { x: number; y: number }[] = new Array(n);
+  const right: { x: number; y: number }[] = new Array(n);
+
+  for (let i = 0; i < n; i++) {
+    const pPrev = pts[Math.max(0, i - 1)];
+    const pNext = pts[Math.min(n - 1, i + 1)];
+    let tx = pNext.x - pPrev.x;
+    let ty = pNext.y - pPrev.y;
+    const len = Math.hypot(tx, ty);
+    if (len < 1e-4) {
+      tx = 1;
+      ty = 0;
+    } else {
+      tx /= len;
+      ty /= len;
+    }
+    const nx = -ty;
+    const ny = tx;
+    const r = radii[i];
+    left[i] = { x: pts[i].x + nx * r, y: pts[i].y + ny * r };
+    right[i] = { x: pts[i].x - nx * r, y: pts[i].y - ny * r };
+  }
+
+  ctx.beginPath();
+  ctx.moveTo(left[0].x, left[0].y);
+
+  for (let i = 1; i < n - 1; i++) {
+    const mx = (left[i].x + left[i + 1].x) / 2;
+    const my = (left[i].y + left[i + 1].y) / 2;
+    ctx.quadraticCurveTo(left[i].x, left[i].y, mx, my);
+  }
+  ctx.lineTo(left[n - 1].x, left[n - 1].y);
+
+  // Smooth round end cap
+  const endAngle = Math.atan2(left[n - 1].y - pts[n - 1].y, left[n - 1].x - pts[n - 1].x);
+  ctx.arc(pts[n - 1].x, pts[n - 1].y, radii[n - 1], endAngle, endAngle + Math.PI, true);
+
+  for (let i = n - 2; i >= 1; i--) {
+    const mx = (right[i].x + right[i - 1].x) / 2;
+    const my = (right[i].y + right[i - 1].y) / 2;
+    ctx.quadraticCurveTo(right[i].x, right[i].y, mx, my);
+  }
+  ctx.lineTo(right[0].x, right[0].y);
+
+  // Smooth round start cap
+  const startAngle = Math.atan2(right[0].y - pts[0].y, right[0].x - pts[0].x);
+  ctx.arc(pts[0].x, pts[0].y, radii[0], startAngle, startAngle + Math.PI, true);
+
+  ctx.closePath();
+  ctx.fill();
+}
+
 export function renderStroke(ctx: CanvasRenderingContext2D, stroke: StrokeItem) {
   const pts = stroke.points;
   if (pts.length === 0) return;
@@ -391,7 +504,7 @@ export function renderStroke(ctx: CanvasRenderingContext2D, stroke: StrokeItem) 
   const lineStyle: StrokeStyle = stroke.lineStyle || 'solid';
 
   ctx.save();
-  ctx.globalAlpha = stroke.opacity;
+  ctx.globalAlpha = stroke.tool === 'pencil' ? stroke.opacity * 0.9 : stroke.opacity;
   ctx.strokeStyle = stroke.color;
   ctx.fillStyle = stroke.color;
   ctx.lineJoin = 'round';
@@ -402,21 +515,15 @@ export function renderStroke(ctx: CanvasRenderingContext2D, stroke: StrokeItem) 
         ? 'butt'
         : 'round';
 
-  if (pts.length === 1) {
-    const r = Math.max(1, (stroke.width * (0.65 + (pts[0].pressure || 0.5) * 0.7)) / 2);
-    ctx.beginPath();
-    ctx.arc(pts[0].x, pts[0].y, r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-    return;
-  }
-
-  // Highlighter or dashed/dotted strokes must be stroked as ONE continuous path so dashes remain even
+  // Highlighter or dashed/dotted strokes use one continuous quadratic path
   if (stroke.tool === 'highlighter' || lineStyle !== 'solid') {
-    if (stroke.tool === 'pencil') {
-      ctx.globalAlpha = stroke.opacity * 0.85;
-      ctx.shadowColor = stroke.color;
-      ctx.shadowBlur = 0.8;
+    if (pts.length === 1) {
+      const r = Math.max(1, (stroke.width * (0.65 + (pts[0].pressure || 0.5) * 0.7)) / 2);
+      ctx.beginPath();
+      ctx.arc(pts[0].x, pts[0].y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      return;
     }
     ctx.lineWidth = Math.max(0.8, stroke.width);
     applyStrokeLineDash(ctx, lineStyle, stroke.width);
@@ -433,38 +540,8 @@ export function renderStroke(ctx: CanvasRenderingContext2D, stroke: StrokeItem) 
     return;
   }
 
-  // Chalk / Pencil tactile powdery subtle edge
-  if (stroke.tool === 'pencil') {
-    ctx.globalAlpha = stroke.opacity * 0.85;
-    ctx.shadowColor = stroke.color;
-    ctx.shadowBlur = 0.8;
-  }
-
-  let prevMidX = pts[0].x;
-  let prevMidY = pts[0].y;
-
-  for (let i = 1; i < pts.length; i++) {
-    const p0 = pts[i - 1];
-    const p1 = pts[i];
-    const midX = i === pts.length - 1 ? p1.x : (p0.x + p1.x) / 2;
-    const midY = i === pts.length - 1 ? p1.y : (p0.y + p1.y) / 2;
-
-    const pressure = (p0.pressure + p1.pressure) / 2 || 0.5;
-    const widthFactor =
-      stroke.tool === 'pen'
-        ? 0.55 + pressure * 0.85
-        : 0.72 + pressure * 0.52;
-
-    ctx.lineWidth = Math.max(0.8, stroke.width * widthFactor);
-    ctx.beginPath();
-    ctx.moveTo(prevMidX, prevMidY);
-    ctx.quadraticCurveTo(p0.x, p0.y, midX, midY);
-    ctx.stroke();
-
-    prevMidX = midX;
-    prevMidY = midY;
-  }
-
+  // Crisp single-fill variable-width ink (zero joint knots, zero lag)
+  fillSmoothVariableInk(ctx, pts, stroke.width, stroke.tool === 'pen');
   ctx.restore();
 }
 
