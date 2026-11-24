@@ -403,12 +403,34 @@ export function exportPageToSVG(page: BoardPage, filename: string) {
   for (const el of page.elements) {
     if (el.type === 'stroke') {
       if (el.points.length === 0) continue;
+      if (el.highlightMode === 'block' && el.points.length >= 2) {
+        const p0 = el.points[0];
+        const p1 = el.points[el.points.length - 1];
+        const rx = Math.min(p0.x, p1.x).toFixed(1);
+        const ry = Math.min(p0.y, p1.y).toFixed(1);
+        const rw = Math.max(4, Math.abs(p1.x - p0.x)).toFixed(1);
+        const rh = Math.max(4, Math.abs(p1.y - p0.y)).toFixed(1);
+        parts.push(
+          `<rect x="${rx}" y="${ry}" width="${rw}" height="${rh}" rx="3" fill="${el.color}" fill-opacity="${el.opacity}" style="mix-blend-mode:multiply;" />`
+        );
+        continue;
+      }
       const d = el.points
         .map((p, idx) => `${idx === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`)
         .join(' ');
       const dashAttr = getDashAttr(el.lineStyle || 'solid', el.width);
+      const blendStyle =
+        el.tool === 'highlighter' && (el.highlightMode || 'pdf') === 'pdf'
+          ? 'style="mix-blend-mode:multiply;"'
+          : '';
+      const cap =
+        (el.lineStyle || 'solid') === 'dotted'
+          ? 'round'
+          : el.tool === 'highlighter' && (el.highlightMode || 'pdf') === 'pdf'
+            ? 'butt'
+            : 'round';
       parts.push(
-        `<path d="${d}" fill="none" stroke="${el.color}" stroke-width="${el.width}" stroke-opacity="${el.opacity}" stroke-linecap="round" stroke-linejoin="round" ${dashAttr} />`
+        `<path d="${d}" fill="none" stroke="${el.color}" stroke-width="${el.width}" stroke-opacity="${el.opacity}" stroke-linecap="${cap}" stroke-linejoin="round" ${dashAttr} ${blendStyle} />`
       );
     } else if (el.type === 'shape') {
       const x = el.width >= 0 ? el.x : el.x + el.width;

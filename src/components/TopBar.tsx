@@ -28,7 +28,7 @@ import {
   Undo2,
   User as UserIcon,
 } from 'lucide-react';
-import { PaperTemplate, PenSlot, StrokeStyle, ToolType } from '../types/inkboard';
+import { PaperTemplate, PenSlot, StrokeStyle, StylusSettings, ToolType } from '../types/inkboard';
 import { ColorPalettePicker } from './ColorPalettePicker';
 
 const StrokePreviewSvg: React.FC<{
@@ -75,8 +75,8 @@ interface TopBarProps {
   onToggleInkToShape: () => void;
   rulerVisible: boolean;
   onToggleRuler: () => void;
-  stylusOnly: boolean;
-  onToggleStylusOnly: () => void;
+  stylusSettings: StylusSettings;
+  onUpdateStylusSettings: (next: StylusSettings) => void;
   darkMode: boolean;
   onToggleDarkMode: () => void;
   pagesDrawerOpen: boolean;
@@ -126,8 +126,8 @@ export const TopBar: React.FC<TopBarProps> = ({
   onToggleInkToShape,
   rulerVisible,
   onToggleRuler,
-  stylusOnly,
-  onToggleStylusOnly,
+  stylusSettings,
+  onUpdateStylusSettings,
   darkMode,
   onToggleDarkMode,
   pagesDrawerOpen,
@@ -162,12 +162,16 @@ export const TopBar: React.FC<TopBarProps> = ({
 }) => {
   const [fileMenuOpen, setFileMenuOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [stylusMenuOpen, setStylusMenuOpen] = useState(false);
+  const [livePenInfo, setLivePenInfo] = useState<{ pressure: number; buttons: number; pointerType: string } | null>(null);
   const [editingSlotId, setEditingSlotId] = useState<string | null>(null);
   const [quickColorOpen, setQuickColorOpen] = useState(false);
   const [editingTitle, setEditingTitle] = useState(false);
   const [draftTitle, setDraftTitle] = useState(title);
   const fileMenuRef = useRef<HTMLDivElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
+  const stylusMenuRef = useRef<HTMLDivElement>(null);
+  const stylusPopoverRef = useRef<HTMLDivElement>(null);
   const slotEditorRef = useRef<HTMLDivElement>(null);
   const mobileSlotEditorRef = useRef<HTMLDivElement>(null);
   const slotPopoverRef = useRef<HTMLDivElement>(null);
@@ -177,6 +181,28 @@ export const TopBar: React.FC<TopBarProps> = ({
   }, [title]);
 
   useEffect(() => {
+    if (!stylusMenuOpen) {
+      setLivePenInfo(null);
+      return;
+    }
+    const onProbe = (e: PointerEvent) => {
+      setLivePenInfo({
+        pressure: e.pressure || 0,
+        buttons: e.buttons || 0,
+        pointerType: e.pointerType || 'mouse',
+      });
+    };
+    window.addEventListener('pointerdown', onProbe);
+    window.addEventListener('pointermove', onProbe);
+    window.addEventListener('pointerup', onProbe);
+    return () => {
+      window.removeEventListener('pointerdown', onProbe);
+      window.removeEventListener('pointermove', onProbe);
+      window.removeEventListener('pointerup', onProbe);
+    };
+  }, [stylusMenuOpen]);
+
+  useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       const target = e.target as Node;
       if (fileMenuRef.current && !fileMenuRef.current.contains(target)) {
@@ -184,6 +210,11 @@ export const TopBar: React.FC<TopBarProps> = ({
       }
       if (moreMenuRef.current && !moreMenuRef.current.contains(target)) {
         setMoreMenuOpen(false);
+      }
+      const inStylusBtn = stylusMenuRef.current?.contains(target);
+      const inStylusPop = stylusPopoverRef.current?.contains(target);
+      if (!inStylusBtn && !inStylusPop) {
+        setStylusMenuOpen(false);
       }
       const inDesktopSlots = slotEditorRef.current?.contains(target);
       const inMobileSlots = mobileSlotEditorRef.current?.contains(target);
@@ -658,27 +689,34 @@ export const TopBar: React.FC<TopBarProps> = ({
         {renderPenControls(false)}
       </div>
 
-      {/* Zone 3: Palm Rejection, Library, Pages, Web Link, Auth, More (Mobile), Theme, Fullscreen */}
+      {/* Zone 3: Stylus/Gaomon Calibration + Palm Rejection, Library, Pages, Web Link, Auth, More (Mobile), Theme, Fullscreen */}
       <div className="flex items-center gap-1 shrink-0">
-        <button
-          type="button"
-          onClick={onToggleStylusOnly}
-          title={
-            stylusOnly
-              ? 'Chế độ Chỉ Bút đang BẬT (chặn cảm ứng tay để chống tì tay)'
-              : 'Chế độ Chỉ Bút đang TẮT'
-          }
-          className={`hidden lg:flex h-8 px-2 rounded-lg items-center gap-1 text-xs font-medium border transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-            stylusOnly
-              ? 'bg-amber-50 dark:bg-amber-950/50 border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-300'
-              : 'border-transparent text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
-          }`}
-        >
-          <Smartphone className="w-3.5 h-3.5" />
-          <span className="hidden min-[1720px]:inline">
-            {stylusOnly ? 'Chỉ bút' : 'Tay & Bút'}
-          </span>
-        </button>
+        <div className="hidden lg:block relative shrink-0" ref={stylusMenuRef}>
+          <button
+            type="button"
+            onClick={() => {
+              setEditingSlotId(null);
+              setQuickColorOpen(false);
+              setStylusMenuOpen((v) => !v);
+            }}
+            title="Cài đặt Bảng vẽ & Bút (Chống nhận nét khi chưa chạm bảng Gaomon, Chống tì tay)"
+            className={`flex h-8 px-2 rounded-lg items-center gap-1 text-xs font-medium border transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+              stylusSettings.stylusOnly || stylusSettings.activationThreshold > 0
+                ? 'bg-amber-50 dark:bg-amber-950/50 border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-300'
+                : 'border-transparent text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}
+          >
+            <Smartphone className="w-3.5 h-3.5" />
+            <span className="hidden min-[1720px]:inline">
+              {stylusSettings.stylusOnly ? 'Chỉ bút' : 'Bảng vẽ'}
+            </span>
+            {stylusSettings.activationThreshold > 0 && (
+              <span className="text-[10px] font-mono-tabular px-1 py-0.2 rounded bg-amber-200/70 dark:bg-amber-900/70">
+                {Math.round(stylusSettings.activationThreshold * 100)}%
+              </span>
+            )}
+          </button>
+        </div>
 
         <button
           type="button"
@@ -824,22 +862,27 @@ export const TopBar: React.FC<TopBarProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  onToggleStylusOnly();
+                  setMoreMenuOpen(false);
+                  setStylusMenuOpen(true);
                 }}
                 className="w-full px-3.5 py-2.5 text-left text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-between cursor-pointer"
               >
                 <span className="flex items-center gap-2.5">
-                  <Smartphone className="w-4 h-4 text-slate-500" />
-                  Chế độ Chỉ Bút (Chống tì tay)
+                  <Smartphone className="w-4 h-4 text-amber-600" />
+                  Bảng vẽ & Bút (Gaomon / Chỉ bút)
                 </span>
                 <span
                   className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
-                    stylusOnly
+                    stylusSettings.stylusOnly || stylusSettings.activationThreshold > 0
                       ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300'
                       : 'text-slate-400'
                   }`}
                 >
-                  {stylusOnly ? 'BẬT' : 'TẮT'}
+                  {stylusSettings.activationThreshold > 0
+                    ? `${Math.round(stylusSettings.activationThreshold * 100)}%`
+                    : stylusSettings.stylusOnly
+                      ? 'BẬT'
+                      : 'Cài đặt'}
                 </span>
               </button>
 
@@ -1019,7 +1062,9 @@ export const TopBar: React.FC<TopBarProps> = ({
                       onUpdatePenSlot({
                         ...editingSlot,
                         tool: t.id,
-                        opacity: t.id === 'highlighter' ? 0.42 : t.id === 'pencil' ? 0.94 : 1,
+                        opacity: t.id === 'highlighter' ? 0.45 : t.id === 'pencil' ? 0.94 : 1,
+                        highlightMode:
+                          t.id === 'highlighter' ? editingSlot.highlightMode || 'pdf' : undefined,
                         width:
                           t.id === 'highlighter'
                             ? Math.max(14, editingSlot.width)
@@ -1036,6 +1081,65 @@ export const TopBar: React.FC<TopBarProps> = ({
                   </button>
                 ))}
               </div>
+
+              {/* Highlighter Mode Options (PDF Highlight vs Color Marker vs Block Box) */}
+              {editingSlot.tool === 'highlighter' && (
+                <div className="mb-3 space-y-2 p-2.5 rounded-lg bg-amber-50/70 dark:bg-amber-950/25 border border-amber-200/70 dark:border-amber-800/50">
+                  <div className="text-[11px] font-semibold text-amber-900 dark:text-amber-200">
+                    Chế độ Bút dạ quang
+                  </div>
+                  <div className="grid grid-cols-3 gap-1 p-1 rounded-lg bg-white/80 dark:bg-slate-900/70">
+                    {(
+                      [
+                        { id: 'pdf', label: 'Tô sáng PDF' },
+                        { id: 'marker', label: 'Bôi màu' },
+                        { id: 'block', label: 'Tô khung' },
+                      ] as const
+                    ).map((hm) => {
+                      const active = (editingSlot.highlightMode || 'pdf') === hm.id;
+                      return (
+                        <button
+                          key={hm.id}
+                          type="button"
+                          onClick={() =>
+                            onUpdatePenSlot({
+                              ...editingSlot,
+                              highlightMode: hm.id,
+                              opacity:
+                                hm.id === 'marker'
+                                  ? Math.max(0.55, editingSlot.opacity)
+                                  : Math.min(0.6, editingSlot.opacity),
+                            })
+                          }
+                          className={`py-1.5 px-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer ${
+                            active
+                              ? 'bg-amber-500 text-white shadow-xs'
+                              : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                          }`}
+                        >
+                          {hm.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {(editingSlot.highlightMode || 'pdf') !== 'block' && (
+                    <label className="flex items-center justify-between text-[11px] text-slate-700 dark:text-slate-200 cursor-pointer pt-0.5">
+                      <span>Tô thẳng hàng (như tô dòng PDF)</span>
+                      <input
+                        type="checkbox"
+                        checked={Boolean(editingSlot.highlightStraight)}
+                        onChange={(e) =>
+                          onUpdatePenSlot({
+                            ...editingSlot,
+                            highlightStraight: e.target.checked,
+                          })
+                        }
+                        className="w-4 h-4 accent-amber-500 rounded cursor-pointer"
+                      />
+                    </label>
+                  )}
+                </div>
+              )}
 
               {/* Line Style Selector (Solid / Dashed / Dotted) */}
               <div className="mb-3">
@@ -1194,6 +1298,176 @@ export const TopBar: React.FC<TopBarProps> = ({
               </div>
             </>
           )}
+        </div>
+      )}
+
+      {/* Gaomon / Stylus Calibration & Palm Rejection Popover */}
+      {stylusMenuOpen && (
+        <div
+          ref={stylusPopoverRef}
+          className="fixed inset-x-3 top-12 sm:inset-x-auto sm:right-4 lg:top-14 sm:w-88 max-h-[calc(100dvh-76px)] overflow-y-auto rounded-xl bg-white dark:bg-[#1B1F27] border border-slate-200 dark:border-slate-700 shadow-2xl p-4 z-50 space-y-3.5"
+        >
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-xs font-semibold text-slate-900 dark:text-slate-100">
+                Bảng vẽ & Bút cảm ứng (Gaomon, Wacom...)
+              </div>
+              <div className="text-[11px] text-slate-500">
+                Chống nhận nét khi bút chưa chạm bảng & chống tì tay
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setStylusMenuOpen(false)}
+              className="text-[11px] text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 cursor-pointer px-1.5 py-0.5"
+            >
+              Đóng
+            </button>
+          </div>
+
+          <label className="flex items-center justify-between gap-2 p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800/70 border border-slate-200/70 dark:border-slate-700/70 cursor-pointer">
+            <div>
+              <div className="text-xs font-medium text-slate-800 dark:text-slate-100">
+                Chế độ Chỉ Bút (Chống tì tay)
+              </div>
+              <div className="text-[10px] text-slate-500">
+                Ngón tay dùng để kéo bảng, chỉ đầu bút mới viết được
+              </div>
+            </div>
+            <input
+              type="checkbox"
+              checked={stylusSettings.stylusOnly}
+              onChange={(e) =>
+                onUpdateStylusSettings({
+                  ...stylusSettings,
+                  stylusOnly: e.target.checked,
+                })
+              }
+              className="w-4 h-4 accent-blue-600 rounded cursor-pointer"
+            />
+          </label>
+
+          <div className="space-y-2 pt-1 border-t border-slate-100 dark:border-slate-800">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-slate-800 dark:text-slate-100">
+                Ngưỡng lực chạm (Chống bút quá nhạy)
+              </span>
+              <span className="text-xs font-mono-tabular font-semibold text-amber-600 dark:text-amber-400">
+                {Math.round(stylusSettings.activationThreshold * 100)}%
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              Nếu bút Gaomon chưa chạm mặt bảng đã ra nét, hãy tăng ngưỡng này lên <strong>10%–20%</strong>. Bút chỉ bắt đầu viết khi lực nhấn vượt ngưỡng.
+            </p>
+
+            <div className="grid grid-cols-4 gap-1">
+              {[
+                { label: 'Tắt (0%)', val: 0 },
+                { label: 'Nhẹ (8%)', val: 0.08 },
+                { label: 'Gaomon (15%)', val: 0.15 },
+                { label: 'Mạnh (24%)', val: 0.24 },
+              ].map((p) => {
+                const active = Math.abs(stylusSettings.activationThreshold - p.val) < 0.015;
+                return (
+                  <button
+                    key={p.val}
+                    type="button"
+                    onClick={() =>
+                      onUpdateStylusSettings({
+                        ...stylusSettings,
+                        activationThreshold: p.val,
+                        minMovePx: p.val > 0 && stylusSettings.minMovePx === 0 ? 1.5 : stylusSettings.minMovePx,
+                      })
+                    }
+                    className={`py-1.5 px-1 rounded-lg border text-[10px] font-medium cursor-pointer transition-colors ${
+                      active
+                        ? 'border-amber-500 bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300'
+                        : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            <input
+              type="range"
+              min={0}
+              max={0.35}
+              step={0.01}
+              value={stylusSettings.activationThreshold}
+              onChange={(e) =>
+                onUpdateStylusSettings({
+                  ...stylusSettings,
+                  activationThreshold: parseFloat(e.target.value),
+                })
+              }
+              className="w-full accent-amber-500 cursor-pointer"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between text-[11px] text-slate-600 dark:text-slate-300">
+              <span>Lọc rung chạm nhẹ (di chuyển tối thiểu)</span>
+              <span className="font-mono-tabular font-semibold">
+                {stylusSettings.minMovePx} px
+              </span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={6}
+              step={0.5}
+              value={stylusSettings.minMovePx}
+              onChange={(e) =>
+                onUpdateStylusSettings({
+                  ...stylusSettings,
+                  minMovePx: parseFloat(e.target.value),
+                })
+              }
+              className="w-full accent-blue-600 cursor-pointer"
+            />
+          </div>
+
+          {/* Live Stylus Pressure Monitor */}
+          <div className="p-2.5 rounded-lg bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-1.5">
+            <div className="flex items-center justify-between text-[11px]">
+              <span className="font-medium text-slate-700 dark:text-slate-200">
+                Kiểm tra lực bút trực tiếp
+              </span>
+              <span className="font-mono-tabular text-slate-500">
+                {livePenInfo
+                  ? `${livePenInfo.pointerType === 'pen' ? 'Bút' : livePenInfo.pointerType} · ${Math.round(livePenInfo.pressure * 100)}%`
+                  : 'Di hoặc chạm bút để đo'}
+              </span>
+            </div>
+            <div className="relative h-2.5 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+              <div
+                className={`h-full transition-all duration-75 ${
+                  livePenInfo &&
+                  (livePenInfo.buttons & 1) !== 0 &&
+                  livePenInfo.pressure >= stylusSettings.activationThreshold
+                    ? 'bg-emerald-500'
+                    : 'bg-amber-400'
+                }`}
+                style={{
+                  width: `${Math.min(100, Math.round((livePenInfo?.pressure || 0) * 100))}%`,
+                }}
+              />
+              {stylusSettings.activationThreshold > 0 && (
+                <div
+                  className="absolute top-0 bottom-0 w-0.5 bg-rose-600 z-10"
+                  style={{
+                    left: `${Math.min(99, Math.round(stylusSettings.activationThreshold * 100))}%`,
+                  }}
+                />
+              )}
+            </div>
+            <div className="text-[10px] text-slate-500">
+              Vạch đỏ là ngưỡng lọc ({Math.round(stylusSettings.activationThreshold * 100)}%). Nếu lơ lửng bút mà thanh vàng vượt vạch đỏ, hãy kéo ngưỡng cao hơn một chút.
+            </div>
+          </div>
         </div>
       )}
     </header>

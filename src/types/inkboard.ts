@@ -13,6 +13,7 @@ export type ToolType =
 export type SelectMode = 'lasso' | 'box';
 export type EraserMode = 'stroke' | 'partial';
 export type StrokeStyle = 'solid' | 'dashed' | 'dotted';
+export type HighlightMode = 'pdf' | 'marker' | 'block';
 
 export type ShapeType =
   | 'line'
@@ -57,6 +58,7 @@ export interface StrokeItem {
   width: number;
   opacity: number;
   lineStyle?: StrokeStyle;
+  highlightMode?: HighlightMode;
   zIndex?: number;
 }
 
@@ -168,6 +170,14 @@ export interface PenSlot {
   width: number;
   opacity: number;
   lineStyle?: StrokeStyle;
+  highlightMode?: HighlightMode;
+  highlightStraight?: boolean;
+}
+
+export interface StylusSettings {
+  stylusOnly: boolean;
+  activationThreshold: number; // 0 .. 0.35 minimum pen pressure required to start a stroke
+  minMovePx: number; // 0 .. 6 minimum pointer movement in px before starting draw
 }
 
 export interface RulerState {
@@ -220,8 +230,26 @@ export const DEFAULT_PEN_SLOTS: PenSlot[] = [
   { id: 'slot-2', label: 'Mực xanh', tool: 'pen', color: '#2563EB', width: 3, opacity: 1 },
   { id: 'slot-3', label: 'Mực đỏ', tool: 'pen', color: '#DC2626', width: 3.5, opacity: 1 },
   { id: 'slot-4', label: 'Bút chì', tool: 'pencil', color: '#334155', width: 2.5, opacity: 0.85 },
-  { id: 'slot-5', label: 'Dạ quang vàng', tool: 'highlighter', color: '#FACC15', width: 22, opacity: 0.42 },
-  { id: 'slot-6', label: 'Dạ quang hồng', tool: 'highlighter', color: '#F472B6', width: 22, opacity: 0.42 },
+  {
+    id: 'slot-5',
+    label: 'Dạ quang vàng',
+    tool: 'highlighter',
+    color: '#FACC15',
+    width: 22,
+    opacity: 0.45,
+    highlightMode: 'pdf',
+    highlightStraight: false,
+  },
+  {
+    id: 'slot-6',
+    label: 'Dạ quang hồng',
+    tool: 'highlighter',
+    color: '#F472B6',
+    width: 22,
+    opacity: 0.45,
+    highlightMode: 'pdf',
+    highlightStraight: false,
+  },
 ];
 
 export const DEFAULT_CHALK_SLOTS: PenSlot[] = [
@@ -230,7 +258,16 @@ export const DEFAULT_CHALK_SLOTS: PenSlot[] = [
   { id: 'slot-3', label: 'Phấn hồng', tool: 'pencil', color: '#F9A8D4', width: 3.5, opacity: 0.95 },
   { id: 'slot-4', label: 'Phấn xanh lơ', tool: 'pencil', color: '#7DD3FC', width: 3.5, opacity: 0.95 },
   { id: 'slot-5', label: 'Phấn cam', tool: 'pen', color: '#FDBA74', width: 3, opacity: 0.95 },
-  { id: 'slot-6', label: 'Dạ quang xanh', tool: 'highlighter', color: '#4ADE80', width: 22, opacity: 0.35 },
+  {
+    id: 'slot-6',
+    label: 'Dạ quang xanh',
+    tool: 'highlighter',
+    color: '#4ADE80',
+    width: 22,
+    opacity: 0.35,
+    highlightMode: 'marker',
+    highlightStraight: false,
+  },
 ];
 
 export const STICKY_COLORS = [

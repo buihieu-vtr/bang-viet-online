@@ -1,6 +1,7 @@
 import {
   BoardElement,
   BoardPage,
+  HighlightMode,
   ImageItem,
   PAGE_DIMENSIONS,
   PAPER_TEMPLATES,
@@ -497,7 +498,11 @@ function fillSmoothVariableInk(
   ctx.fill();
 }
 
-export function renderStroke(ctx: CanvasRenderingContext2D, stroke: StrokeItem) {
+export function renderStroke(
+  ctx: CanvasRenderingContext2D,
+  stroke: StrokeItem,
+  isOverlay = false
+) {
   const pts = stroke.points;
   if (pts.length === 0) return;
 
@@ -508,15 +513,72 @@ export function renderStroke(ctx: CanvasRenderingContext2D, stroke: StrokeItem) 
   ctx.strokeStyle = stroke.color;
   ctx.fillStyle = stroke.color;
   ctx.lineJoin = 'round';
-  ctx.lineCap =
-    lineStyle === 'dotted'
-      ? 'round'
-      : stroke.tool === 'highlighter'
-        ? 'butt'
-        : 'round';
 
-  // Highlighter or dashed/dotted strokes use one continuous quadratic path
-  if (stroke.tool === 'highlighter' || lineStyle !== 'solid') {
+  if (stroke.tool === 'highlighter') {
+    const hMode: HighlightMode = stroke.highlightMode || 'pdf';
+    if (!isOverlay && (hMode === 'pdf' || hMode === 'block')) {
+      ctx.globalCompositeOperation = 'multiply';
+    }
+
+    if (hMode === 'block' && pts.length >= 2) {
+      const p0 = pts[0];
+      const p1 = pts[pts.length - 1];
+      const rx = Math.min(p0.x, p1.x);
+      const ry = Math.min(p0.y, p1.y);
+      const rw = Math.max(4, Math.abs(p1.x - p0.x));
+      const rh = Math.max(4, Math.abs(p1.y - p0.y));
+      ctx.beginPath();
+      ctx.roundRect(rx, ry, rw, rh, 3);
+      ctx.fill();
+      if (lineStyle !== 'solid') {
+        ctx.globalAlpha = Math.min(0.95, stroke.opacity + 0.25);
+        ctx.lineWidth = Math.max(1.5, Math.min(4, stroke.width * 0.14));
+        applyStrokeLineDash(ctx, lineStyle, ctx.lineWidth);
+        ctx.stroke();
+      }
+      ctx.restore();
+      return;
+    }
+
+    ctx.lineCap =
+      lineStyle === 'dotted'
+        ? 'round'
+        : hMode === 'marker'
+          ? 'round'
+          : 'butt';
+
+    if (pts.length === 1) {
+      const r = Math.max(2, stroke.width / 2);
+      ctx.beginPath();
+      if (hMode === 'pdf') {
+        ctx.rect(pts[0].x - r * 0.6, pts[0].y - r, r * 1.2, r * 2);
+      } else {
+        ctx.arc(pts[0].x, pts[0].y, r, 0, Math.PI * 2);
+      }
+      ctx.fill();
+      ctx.restore();
+      return;
+    }
+
+    ctx.lineWidth = Math.max(1, stroke.width);
+    applyStrokeLineDash(ctx, lineStyle, stroke.width);
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length - 1; i++) {
+      const midX = (pts[i].x + pts[i + 1].x) / 2;
+      const midY = (pts[i].y + pts[i + 1].y) / 2;
+      ctx.quadraticCurveTo(pts[i].x, pts[i].y, midX, midY);
+    }
+    ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
+
+  ctx.lineCap = lineStyle === 'dotted' ? 'round' : 'round';
+
+  // Dashed / dotted pen & pencil strokes use one continuous quadratic path
+  if (lineStyle !== 'solid') {
     if (pts.length === 1) {
       const r = Math.max(1, (stroke.width * (0.65 + (pts[0].pressure || 0.5) * 0.7)) / 2);
       ctx.beginPath();
@@ -709,16 +771,18 @@ export function renderShape(ctx: CanvasRenderingContext2D, shape: ShapeItem) {
       ctx.moveTo(x + pad, cy);
       ctx.lineTo(x + w - pad, cy);
       ctx.stroke();
-      drawArrowHead(ctx, x + pad, cy, x + w - pad, cy, 11);
 
       ctx.beginPath();
       ctx.moveTo(cx, y + h - pad);
       ctx.lineTo(cx, y + pad);
       ctx.stroke();
+
+      ctx.save();
+      ctx.setLineDash([]);
+      drawArrowHead(ctx, x + pad, cy, x + w - pad, cy, 11);
       drawArrowHead(ctx, cx, y + h - pad, cx, y + pad, 11);
 
       const step = 32;
-      ctx.save();
       ctx.lineWidth = Math.max(1, shape.strokeWidth * 0.65);
       ctx.beginPath();
       for (let tx = cx + step; tx < x + w - pad - 14; tx += step) {

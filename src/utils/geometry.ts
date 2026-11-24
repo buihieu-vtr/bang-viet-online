@@ -31,6 +31,18 @@ export function distToSegment(
 export function getElementBBox(el: BoardElement): BBox {
   if (el.type === 'stroke') {
     if (el.points.length === 0) return { x: 0, y: 0, width: 0, height: 0 };
+    if (el.highlightMode === 'block' && el.points.length >= 2) {
+      const p0 = el.points[0];
+      const p1 = el.points[el.points.length - 1];
+      const x = Math.min(p0.x, p1.x);
+      const y = Math.min(p0.y, p1.y);
+      return {
+        x,
+        y,
+        width: Math.max(6, Math.abs(p1.x - p0.x)),
+        height: Math.max(6, Math.abs(p1.y - p0.y)),
+      };
+    }
     let minX = Infinity;
     let minY = Infinity;
     let maxX = -Infinity;
@@ -108,6 +120,15 @@ export function hitTestElement(
   tolerance = 10
 ): boolean {
   if (el.type === 'stroke') {
+    if (el.highlightMode === 'block' && el.points.length >= 2) {
+      const box = getElementBBox(el);
+      return (
+        pt.x >= box.x - tolerance &&
+        pt.x <= box.x + box.width + tolerance &&
+        pt.y >= box.y - tolerance &&
+        pt.y <= box.y + box.height + tolerance
+      );
+    }
     const rad = Math.max(tolerance, el.width / 2 + 4);
     if (el.points.length === 1) {
       return dist(pt, el.points[0]) <= rad;
@@ -231,6 +252,9 @@ export function eraseStrokePartial(
   eraserCenter: { x: number; y: number },
   radius: number
 ): StrokeItem[] {
+  if (stroke.highlightMode === 'block') {
+    return hitTestElement(stroke, eraserCenter, radius) ? [] : [stroke];
+  }
   const effectiveRad = radius + stroke.width * 0.35;
   let anyHit = false;
   const keptSegments: Point[][] = [];

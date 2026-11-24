@@ -32,6 +32,7 @@ import {
   ShapeType,
   StickyItem,
   StrokeStyle,
+  StylusSettings,
   TextItem,
   ToolType,
   ViewportState,
@@ -113,7 +114,36 @@ export default function App() {
   const [shapeLineStyle, setShapeLineStyle] = useState<StrokeStyle>('solid');
   const [shapeStrokeWidth, setShapeStrokeWidth] = useState<number>(3);
   const [inkToShape, setInkToShape] = useState<boolean>(false);
-  const [stylusOnly, setStylusOnly] = useState<boolean>(false);
+  const [stylusSettings, setStylusSettings] = useState<StylusSettings>(() => {
+    try {
+      const raw = localStorage.getItem('inkboard_stylus_settings');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        return {
+          stylusOnly: Boolean(parsed.stylusOnly),
+          activationThreshold:
+            typeof parsed.activationThreshold === 'number'
+              ? parsed.activationThreshold
+              : 0.1,
+          minMovePx: typeof parsed.minMovePx === 'number' ? parsed.minMovePx : 1.5,
+        };
+      }
+    } catch {
+      // Ignore storage error
+    }
+    return {
+      stylusOnly: false,
+      activationThreshold: 0.1,
+      minMovePx: 1.5,
+    };
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('inkboard_stylus_settings', JSON.stringify(stylusSettings));
+    } catch {
+      // Ignore storage error
+    }
+  }, [stylusSettings]);
   const [darkMode, setDarkMode] = useState<boolean>(false);
   const [tocOpen, setTocOpen] = useState<boolean>(false);
   const [pagesDrawerOpen, setPagesDrawerOpen] = useState<boolean>(false);
@@ -1107,8 +1137,8 @@ export default function App() {
             y: !prev.visible ? center.y + activePageOffset.y : prev.y,
           }));
         }}
-        stylusOnly={stylusOnly}
-        onToggleStylusOnly={() => setStylusOnly((v) => !v)}
+        stylusSettings={stylusSettings}
+        onUpdateStylusSettings={setStylusSettings}
         darkMode={darkMode}
         onToggleDarkMode={() => setDarkMode((v) => !v)}
         pagesDrawerOpen={pagesDrawerOpen}
@@ -1214,6 +1244,12 @@ export default function App() {
               }
               setActiveTool(t);
             }}
+            activePenSlot={activePenSlot}
+            onUpdatePenSlot={(updated) => {
+              setPenSlots((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+              setActiveTool(updated.tool);
+            }}
+            hasSelection={activeTool === 'select' && selectedIds.length > 0}
             selectMode={selectMode}
             onSelectModeChange={setSelectMode}
             eraserMode={eraserMode}
@@ -1272,7 +1308,7 @@ export default function App() {
             shapeLineStyle={shapeLineStyle}
             shapeStrokeWidth={shapeStrokeWidth}
             inkToShape={inkToShape}
-            stylusOnly={stylusOnly}
+            stylusSettings={stylusSettings}
             darkMode={darkMode}
             ruler={ruler}
             onRulerChange={setRuler}
@@ -1286,6 +1322,10 @@ export default function App() {
             }}
             scrollToPageRequest={scrollToPageRequest}
             onSelectTool={setActiveTool}
+            customColors={customColors}
+            onAddCustomColor={handleAddCustomColor}
+            onRemoveCustomColor={handleRemoveCustomColor}
+            isCompact={isCompactViewport}
           />
 
           {/* Quick Multi-Page Switcher (Top-left on compact mobile so it never collides with Bottom ToolDock) */}

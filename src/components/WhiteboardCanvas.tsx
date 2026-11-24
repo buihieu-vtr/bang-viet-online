@@ -3,6 +3,8 @@ import {
   ArrowDown,
   ArrowUp,
   Copy,
+  Minus,
+  Plus,
   RotateCw,
   Trash2,
 } from 'lucide-react';
@@ -11,6 +13,7 @@ import {
   BoardElement,
   BoardPage,
   EraserMode,
+  HighlightMode,
   ImageItem,
   PAGE_DIMENSIONS,
   PenSlot,
@@ -22,10 +25,12 @@ import {
   StickyItem,
   StrokeItem,
   StrokeStyle,
+  StylusSettings,
   TextItem,
   ToolType,
   ViewportState,
 } from '../types/inkboard';
+import { ColorPalettePicker } from './ColorPalettePicker';
 import {
   bboxesIntersect,
   dist,
@@ -71,7 +76,7 @@ interface WhiteboardCanvasProps {
   shapeLineStyle: StrokeStyle;
   shapeStrokeWidth: number;
   inkToShape: boolean;
-  stylusOnly: boolean;
+  stylusSettings: StylusSettings;
   darkMode: boolean;
   ruler: RulerState;
   onRulerChange: React.Dispatch<React.SetStateAction<RulerState>>;
@@ -81,6 +86,10 @@ interface WhiteboardCanvasProps {
   onSelectPage: (pageId: string) => void;
   scrollToPageRequest: { pageId: string; seq: number } | null;
   onSelectTool: (tool: ToolType) => void;
+  customColors: string[];
+  onAddCustomColor: (hex: string) => void;
+  onRemoveCustomColor: (hex: string) => void;
+  isCompact?: boolean;
 }
 
 interface PageLayout {
@@ -101,6 +110,19 @@ const PEN_SVG_CURSOR = `url("data:image/svg+xml,${PEN_CURSOR_SVG}") 2 16, crossh
 
 type InteractionMode =
   | { type: 'none' }
+  | {
+      type: 'penPending';
+      kind: 'draw' | 'shape' | 'eraseStroke' | 'erasePartial';
+      pageId: string;
+      offsetX: number;
+      offsetY: number;
+      startClientX: number;
+      startClientY: number;
+      startLocal: { x: number; y: number };
+      startSnapped: boolean;
+      maxPressure: number;
+      downTime: number;
+    }
   | { type: 'pan'; startScreenX: number; startScreenY: number; origOffsetX: number; origOffsetY: number }
   | {
       type: 'draw';
@@ -180,7 +202,7 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
   shapeLineStyle,
   shapeStrokeWidth,
   inkToShape,
-  stylusOnly,
+  stylusSettings,
   darkMode,
   ruler,
   onRulerChange,
@@ -190,6 +212,10 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
   onSelectPage,
   scrollToPageRequest,
   onSelectTool,
+  customColors,
+  onAddCustomColor,
+  onRemoveCustomColor,
+  isCompact = false,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -210,6 +236,13 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
   const [editingDraft, setEditingDraft] = useState('');
   const [canvasSize, setCanvasSize] = useState({ width: 1200, height: 800 });
   const [renderTick, setRenderTick] = useState(0);
+  const [selMenu, setSelMenu] = useState<null | 'strokeColor' | 'fillColor' | 'size'>(null);
+
+  useEffect(() => {
+    if (selectedIds.length === 0 || activeTool !== 'select') {
+      setSelMenu(null);
+    }
+  }, [selectedIds.length, activeTool]);
 
   const rulerDragRef = useRef<
     | null
@@ -649,11 +682,11 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
           ctx.beginPath();
           ctx.rect(0, 0, L.width, L.height);
           ctx.clip();
-          renderStroke(ctx, liveDraw.stroke);
+          renderStroke(ctx, liveDraw.stroke, true);
           ctx.restore();
         }
       } else {
-        renderStroke(ctx, liveDraw.stroke);
+        renderStroke(ctx, liveDraw.stroke, true);
       }
     }
 
@@ -871,7 +904,7 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
       }
     }
 
-    const isPalmTouch = stylusOnly && e.pointerType === 'touch';
+    const isPalmTouch = stylusSettings.stylusOnly && e.pointerType === 'touch';
 
     const pt = screenToWorld(e.clientX, e.clientY);
     cursorWorldRef.current = pt;
@@ -907,6 +940,51 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
       onSelectPage(targetPage.id);
     }
 
+    // Gaomon / Stylus pre-contact hover guard for drawing tools
+    const isDrawingTool =
+      activeTool === 'pen' ||
+      activeTool === 'pencil' ||
+      activeTool === 'highlighter' ||
+      activeTool === 'shape' ||
+      activeTool === 'eraser';
+
+    if (e.pointerType === 'pen' && isDrawingTool) {
+      if ((e.buttons & 1) === 0) return;
+      const needThreshold =
+        stylusSettings.activationThreshold > 0 &&
+        e.pressure < stylusSettings.activationThreshold;
+      const needMove = stylusSettings.minMovePx > 0;
+      if (needThreshold || needMove) {
+        const snap =
+          activeTool === 'pen' || activeTool === 'pencil' || activeTool === 'highlighter'
+            ? snapPointToRuler(pt.x, pt.y, ruler)
+            : { x: pt.x, y: pt.y, snapped: false };
+        const kind =
+          activeTool === 'shape'
+            ? 'shape'
+            : activeTool === 'eraser'
+              ? eraserMode === 'stroke'
+                ? 'eraseStroke'
+                : 'erasePartial'
+              : 'draw';
+        interactionRef.current = {
+          type: 'penPending',
+          kind,
+          pageId: targetPage.id,
+          offsetX: offX,
+          offsetY: offY,
+          startClientX: e.clientX,
+          startClientY: e.clientY,
+          startLocal: { x: snap.x - offX, y: snap.y - offY },
+          startSnapped: snap.snapped,
+          maxPressure: e.pressure || 0,
+          downTime: e.nativeEvent.timeStamp || performance.now(),
+        };
+        drawOverlay();
+        return;
+      }
+    }
+
     // Pen / Pencil / Highlighter
     if (activeTool === 'pen' || activeTool === 'pencil' || activeTool === 'highlighter') {
       const snap = snapPointToRuler(pt.x, pt.y, ruler);
@@ -914,6 +992,9 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
       const localY = snap.y - offY;
       const pressure = e.pointerType === 'pen' && e.pressure > 0 ? e.pressure : 0.52;
       const nowTs = e.nativeEvent.timeStamp || performance.now();
+      const highlightMode =
+        activeTool === 'highlighter' ? activePenSlot.highlightMode || 'pdf' : undefined;
+      const startPt: Point = { x: localX, y: localY, pressure, t: Date.now() };
       const stroke: StrokeItem = {
         id: uid('stroke'),
         type: 'stroke',
@@ -922,7 +1003,8 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
         width: activePenSlot.width,
         opacity: activePenSlot.opacity,
         lineStyle: activePenSlot.lineStyle || 'solid',
-        points: [{ x: localX, y: localY, pressure, t: Date.now() }],
+        highlightMode,
+        points: highlightMode === 'block' ? [startPt, { ...startPt }] : [startPt],
       };
       interactionRef.current = {
         type: 'draw',
@@ -1192,7 +1274,7 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
       return;
     }
 
-    const mode = interactionRef.current;
+    let mode = interactionRef.current;
     if (mode.type === 'none') {
       if (
         activeTool === 'eraser' ||
@@ -1202,6 +1284,162 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
         drawOverlay();
       }
       return;
+    }
+
+    if (mode.type === 'penPending') {
+      const pending = mode;
+      const nativeEv = e.nativeEvent as PointerEvent;
+      const coalesced =
+        typeof nativeEv.getCoalescedEvents === 'function'
+          ? nativeEv.getCoalescedEvents()
+          : [];
+      const evList = coalesced.length > 0 ? coalesced : [nativeEv];
+      const rect = canvasRef.current?.getBoundingClientRect();
+
+      let activatedCe: PointerEvent | null = null;
+      let movedPx = 0;
+
+      for (const ce of evList) {
+        if ((ce.buttons & 1) === 0) continue;
+        pending.maxPressure = Math.max(pending.maxPressure, ce.pressure || 0);
+        const dPx = Math.hypot(ce.clientX - pending.startClientX, ce.clientY - pending.startClientY);
+        if (
+          (ce.pressure || 0) >= stylusSettings.activationThreshold &&
+          dPx >= stylusSettings.minMovePx
+        ) {
+          activatedCe = ce;
+          movedPx = dPx;
+          break;
+        }
+      }
+
+      if (!activatedCe) {
+        drawOverlay();
+        return;
+      }
+
+      const sx = activatedCe.clientX - (rect?.left ?? 0);
+      const sy = activatedCe.clientY - (rect?.top ?? 0);
+      const wx = rect ? (sx - viewport.offsetX) / viewport.zoom : pt.x;
+      const wy = rect ? (sy - viewport.offsetY) / viewport.zoom : pt.y;
+      const targetPage = pages.find((p) => p.id === pending.pageId) || page;
+
+      if (pending.kind === 'draw') {
+        const snap = snapPointToRuler(wx, wy, ruler);
+        const startPtCoords =
+          movedPx > 3
+            ? { x: snap.x - pending.offsetX, y: snap.y - pending.offsetY }
+            : pending.startLocal;
+        const pressure = activatedCe.pressure > 0 ? activatedCe.pressure : 0.52;
+        const highlightMode =
+          activeTool === 'highlighter' ? activePenSlot.highlightMode || 'pdf' : undefined;
+        const firstPt: Point = {
+          x: startPtCoords.x,
+          y: startPtCoords.y,
+          pressure,
+          t: Date.now(),
+        };
+        const stroke: StrokeItem = {
+          id: uid('stroke'),
+          type: 'stroke',
+          tool: activeTool === 'pencil' || activeTool === 'highlighter' ? activeTool : 'pen',
+          color: activePenSlot.color,
+          width: activePenSlot.width,
+          opacity: activePenSlot.opacity,
+          lineStyle: activePenSlot.lineStyle || 'solid',
+          highlightMode,
+          points: highlightMode === 'block' ? [firstPt, { ...firstPt }] : [firstPt],
+        };
+        const promoted: Extract<InteractionMode, { type: 'draw' }> = {
+          type: 'draw',
+          pageId: pending.pageId,
+          offsetX: pending.offsetX,
+          offsetY: pending.offsetY,
+          stroke,
+          rulerSnapped: snap.snapped,
+          lastRaw: startPtCoords,
+          lastRawTime: activatedCe.timeStamp || performance.now(),
+          lastPressure: pressure,
+        };
+        interactionRef.current = promoted;
+        mode = promoted;
+        liveDrawStrokeRef.current = { pageId: pending.pageId, stroke };
+        if (selectedIds.length > 0) onSelectedIdsChange([]);
+      } else if (pending.kind === 'shape') {
+        const startCoords =
+          movedPx > 4
+            ? { x: wx - pending.offsetX, y: wy - pending.offsetY }
+            : pending.startLocal;
+        const shape: ShapeItem = {
+          id: uid('shape'),
+          type: 'shape',
+          shapeType: activeShape,
+          x: startCoords.x,
+          y: startCoords.y,
+          width: 1,
+          height: 1,
+          rotation: 0,
+          strokeColor: shapeStrokeColor,
+          fillColor: shapeFillColor,
+          fillOpacity: shapeFillColor === 'transparent' ? 0 : 0.25,
+          strokeWidth: shapeStrokeWidth,
+          lineStyle: shapeLineStyle,
+          dashed: shapeLineStyle !== 'solid',
+          rows: 3,
+          cols: 3,
+        };
+        interactionRef.current = {
+          type: 'shape',
+          pageId: pending.pageId,
+          offsetX: pending.offsetX,
+          offsetY: pending.offsetY,
+          shape,
+          startX: startCoords.x,
+          startY: startCoords.y,
+        };
+        liveShapeRef.current = { pageId: pending.pageId, shape };
+        if (selectedIds.length > 0) onSelectedIdsChange([]);
+        drawOverlay();
+        return;
+      } else if (pending.kind === 'eraseStroke') {
+        onSelectedIdsChange([]);
+        const actLocal = { x: wx - pending.offsetX, y: wy - pending.offsetY };
+        interactionRef.current = {
+          type: 'eraseStroke',
+          pageId: pending.pageId,
+          offsetX: pending.offsetX,
+          offsetY: pending.offsetY,
+        };
+        const filtered = targetPage.elements.filter(
+          (el) => (el.type === 'image' && el.locked) || !hitTestElement(el, actLocal, 10)
+        );
+        setLiveElements({
+          pageId: pending.pageId,
+          items: filtered.length !== targetPage.elements.length ? filtered : [...targetPage.elements],
+        });
+        drawOverlay();
+        return;
+      } else if (pending.kind === 'erasePartial') {
+        onSelectedIdsChange([]);
+        const actLocal = { x: wx - pending.offsetX, y: wy - pending.offsetY };
+        interactionRef.current = {
+          type: 'erasePartial',
+          pageId: pending.pageId,
+          offsetX: pending.offsetX,
+          offsetY: pending.offsetY,
+        };
+        const next: BoardElement[] = [];
+        for (const el of targetPage.elements) {
+          if (el.type === 'stroke') {
+            next.push(...eraseStrokePartial(el, actLocal, eraserSize / 2));
+          } else {
+            next.push(el);
+          }
+        }
+        setLiveElements({ pageId: pending.pageId, items: next });
+        drawOverlay();
+        return;
+      }
     }
 
     if (mode.type === 'pan') {
@@ -1234,7 +1472,25 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
       const minStepWorld = Math.max(0.85, 1.4 / viewport.zoom);
       let addedAny = false;
 
+      const isBlockHighlight =
+        mode.stroke.tool === 'highlighter' && mode.stroke.highlightMode === 'block';
+      const isStraightHighlight =
+        mode.stroke.tool === 'highlighter' &&
+        !isBlockHighlight &&
+        Boolean(activePenSlot.highlightStraight || e.shiftKey);
+
       for (const ce of evList) {
+        if (ce.pointerType === 'pen' && (ce.buttons & 1) === 0) continue;
+        if (
+          ce.pointerType === 'pen' &&
+          stylusSettings.activationThreshold > 0 &&
+          ce.pressure > 0 &&
+          ce.pressure < stylusSettings.activationThreshold * 0.45 &&
+          mode.stroke.points.length >= 2
+        ) {
+          continue;
+        }
+
         const sx = ce.clientX - (rect?.left ?? 0);
         const sy = ce.clientY - (rect?.top ?? 0);
         const wx = (sx - viewport.offsetX) / viewport.zoom;
@@ -1242,6 +1498,34 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
         const snap = snapPointToRuler(wx, wy, ruler);
         const rawX = snap.x - mode.offsetX;
         const rawY = snap.y - mode.offsetY;
+
+        if (isBlockHighlight) {
+          const origin = mode.stroke.points[0];
+          mode.stroke.points = [
+            origin,
+            { x: rawX, y: rawY, pressure: 0.5, t: Date.now() },
+          ];
+          mode.lastRaw = { x: rawX, y: rawY };
+          cursorWorldRef.current = { x: wx, y: wy };
+          addedAny = true;
+          continue;
+        }
+
+        if (isStraightHighlight) {
+          const origin = mode.stroke.points[0];
+          const horiz = Math.abs(rawX - origin.x) >= Math.abs(rawY - origin.y);
+          const endX = horiz ? rawX : origin.x;
+          const endY = horiz ? origin.y : rawY;
+          mode.stroke.points = [
+            origin,
+            { x: endX, y: endY, pressure: 0.55, t: Date.now() },
+          ];
+          mode.lastRaw = { x: endX, y: endY };
+          cursorWorldRef.current = { x: wx, y: wy };
+          addedAny = true;
+          continue;
+        }
+
         const stepDist = Math.hypot(rawX - mode.lastRaw.x, rawY - mode.lastRaw.y);
         if (stepDist < minStepWorld) continue;
 
@@ -1438,11 +1722,20 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
     const mode = interactionRef.current;
     interactionRef.current = { type: 'none' };
 
+    if (mode.type === 'penPending') {
+      drawOverlay();
+      return;
+    }
+
     if (mode.type === 'draw') {
       const targetPage = pages.find((p) => p.id === mode.pageId) || page;
       const pts = mode.stroke.points;
       const lastPt = pts[pts.length - 1];
+      const keepFixedEndpoint =
+        mode.stroke.tool === 'highlighter' &&
+        (mode.stroke.highlightMode === 'block' || Boolean(activePenSlot.highlightStraight));
       if (
+        !keepFixedEndpoint &&
         lastPt &&
         Math.hypot(mode.lastRaw.x - lastPt.x, mode.lastRaw.y - lastPt.y) >= 0.5
       ) {
@@ -1680,7 +1973,152 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
     rulerDragRef.current = null;
   };
 
-  // Selection action handlers (on active page)
+  // Selection action & style update handlers (on active page)
+  const updateSelectedElements = (updater: (el: BoardElement) => BoardElement) => {
+    if (selectedIds.length === 0) return;
+    const next = page.elements.map((el) =>
+      selectedIds.includes(el.id) ? updater(el) : el
+    );
+    onCommitPageElements(page.id, next);
+  };
+
+  const applySelectionColor = (hex: string) => {
+    updateSelectedElements((el) => {
+      if (el.type === 'stroke') return { ...el, color: hex };
+      if (el.type === 'shape') return { ...el, strokeColor: hex };
+      if (el.type === 'text') return { ...el, color: hex };
+      if (el.type === 'sticky') return { ...el, textColor: hex };
+      return el;
+    });
+  };
+
+  const applySelectionFillColor = (hex: string) => {
+    updateSelectedElements((el) => {
+      if (el.type === 'shape') {
+        return {
+          ...el,
+          fillColor: hex,
+          fillOpacity: hex === 'transparent' ? 0 : Math.max(0.25, el.fillOpacity || 0.25),
+        };
+      }
+      if (el.type === 'text') return { ...el, bgColor: hex };
+      if (el.type === 'sticky' && hex !== 'transparent') return { ...el, noteColor: hex };
+      return el;
+    });
+  };
+
+  const applySelectionLineStyle = (style: StrokeStyle) => {
+    updateSelectedElements((el) => {
+      if (el.type === 'stroke') return { ...el, lineStyle: style };
+      if (el.type === 'shape') {
+        return { ...el, lineStyle: style, dashed: style !== 'solid' };
+      }
+      return el;
+    });
+  };
+
+  const applySelectionSize = (nextVal: number) => {
+    updateSelectedElements((el) => {
+      if (el.type === 'stroke') {
+        return { ...el, width: Math.max(1, Math.min(60, nextVal)) };
+      }
+      if (el.type === 'shape') {
+        return { ...el, strokeWidth: Math.max(1, Math.min(24, nextVal)) };
+      }
+      if (el.type === 'text' || el.type === 'sticky') {
+        return { ...el, fontSize: Math.max(10, Math.min(72, nextVal)) };
+      }
+      return el;
+    });
+  };
+
+  const applySelectionHighlightMode = (mode: HighlightMode) => {
+    updateSelectedElements((el) => {
+      if (el.type === 'stroke' && el.tool === 'highlighter') {
+        return { ...el, highlightMode: mode };
+      }
+      return el;
+    });
+  };
+
+  const applySelectionHighlightOpacity = (opacity: number) => {
+    updateSelectedElements((el) => {
+      if (el.type === 'stroke' && el.tool === 'highlighter') {
+        return { ...el, opacity: Math.max(0.15, Math.min(0.95, opacity)) };
+      }
+      return el;
+    });
+  };
+
+  const selectionSummary = useMemo(() => {
+    let hasColor = false;
+    let hasFill = false;
+    let hasLineStyle = false;
+    let hasSize = false;
+    let hasHighlighter = false;
+    let strokeColor = '#2563EB';
+    let fillColor = 'transparent';
+    let lineStyle: StrokeStyle = 'solid';
+    let size = 3;
+    let highlightMode: HighlightMode = 'pdf';
+    let highlightOpacity = 0.45;
+
+    for (const el of selectedElements) {
+      if (el.type === 'stroke') {
+        if (!hasColor) strokeColor = el.color;
+        if (!hasLineStyle) lineStyle = el.lineStyle || 'solid';
+        if (!hasSize) size = el.width;
+        hasColor = true;
+        hasLineStyle = true;
+        hasSize = true;
+        if (el.tool === 'highlighter') {
+          if (!hasHighlighter) {
+            highlightMode = el.highlightMode || 'pdf';
+            highlightOpacity = el.opacity;
+          }
+          hasHighlighter = true;
+        }
+      } else if (el.type === 'shape') {
+        if (!hasColor) strokeColor = el.strokeColor;
+        if (!hasFill) fillColor = el.fillColor;
+        if (!hasLineStyle) lineStyle = el.lineStyle || (el.dashed ? 'dashed' : 'solid');
+        if (!hasSize) size = el.strokeWidth;
+        hasColor = true;
+        hasFill = true;
+        hasLineStyle = true;
+        hasSize = true;
+      } else if (el.type === 'text') {
+        if (!hasColor) strokeColor = el.color;
+        if (!hasFill) fillColor = el.bgColor;
+        if (!hasSize) size = el.fontSize;
+        hasColor = true;
+        hasFill = true;
+        hasSize = true;
+      } else if (el.type === 'sticky') {
+        if (!hasColor) strokeColor = el.textColor;
+        if (!hasFill) fillColor = el.noteColor;
+        if (!hasSize) size = el.fontSize;
+        hasColor = true;
+        hasFill = true;
+        hasSize = true;
+      }
+    }
+
+    return {
+      hasColor,
+      hasFill,
+      hasLineStyle,
+      hasSize,
+      hasHighlighter,
+      strokeColor,
+      fillColor,
+      lineStyle,
+      size,
+      highlightMode,
+      highlightOpacity,
+    };
+  }, [selectedElements]);
+
   const duplicateSelected = () => {
     const clones = selectedElements.map((el) => ({
       ...translateElement(el, 28, 28),
@@ -1818,7 +2256,281 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
         </div>
       )}
 
-      {/* Interactive Selection Overlay Handles & Floating Action Bar */}
+      {/* Selection Style & Actions Floating Toolbar (viewport-safe top center) */}
+      {activeTool === 'select' && selectedElements.length > 0 && !editingText && (
+        <div
+          onPointerDown={(e) => e.stopPropagation()}
+          className={`absolute ${
+            isCompact ? 'top-11' : 'top-3'
+          } left-1/2 -translate-x-1/2 z-30 max-w-[calc(100%-16px)] flex flex-wrap items-center justify-center gap-1 px-2 py-1.5 rounded-xl bg-white/95 dark:bg-[#1B1F27]/95 backdrop-blur-md border border-slate-200 dark:border-slate-700 shadow-lg select-none`}
+        >
+          <span className="px-1.5 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 text-[11px] font-semibold">
+            {selectedElements.length} mục
+          </span>
+
+          {/* Color picker */}
+          {selectionSummary.hasColor && (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() =>
+                  setSelMenu((m) => (m === 'strokeColor' ? null : 'strokeColor'))
+                }
+                title="Đổi màu nét / chữ"
+                className={`h-7 px-2 rounded-lg flex items-center gap-1.5 text-[11px] font-medium cursor-pointer border transition-colors ${
+                  selMenu === 'strokeColor'
+                    ? 'border-blue-600 bg-blue-50 dark:bg-blue-950/50 text-blue-600'
+                    : 'border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                <span
+                  className="w-3.5 h-3.5 rounded-full border border-slate-300 dark:border-slate-600 shrink-0"
+                  style={{ backgroundColor: selectionSummary.strokeColor }}
+                />
+                <span>Màu</span>
+              </button>
+              {selMenu === 'strokeColor' && (
+                <div className="absolute left-0 top-9 z-40 w-[264px] p-3 rounded-2xl bg-white dark:bg-[#1B1F27] border border-slate-200 dark:border-slate-700 shadow-2xl">
+                  <ColorPalettePicker
+                    label="Màu nét / Chữ"
+                    color={selectionSummary.strokeColor}
+                    onChange={applySelectionColor}
+                    customColors={customColors}
+                    onAddCustomColor={onAddCustomColor}
+                    onRemoveCustomColor={onRemoveCustomColor}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Fill / background color */}
+          {selectionSummary.hasFill && (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() =>
+                  setSelMenu((m) => (m === 'fillColor' ? null : 'fillColor'))
+                }
+                title="Đổi màu tô nền"
+                className={`h-7 px-2 rounded-lg flex items-center gap-1.5 text-[11px] font-medium cursor-pointer border transition-colors ${
+                  selMenu === 'fillColor'
+                    ? 'border-blue-600 bg-blue-50 dark:bg-blue-950/50 text-blue-600'
+                    : 'border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                <span
+                  className="w-3.5 h-3.5 rounded-sm border border-slate-300 dark:border-slate-600 shrink-0 flex items-center justify-center text-[9px]"
+                  style={{
+                    backgroundColor:
+                      selectionSummary.fillColor === 'transparent'
+                        ? 'transparent'
+                        : selectionSummary.fillColor,
+                  }}
+                >
+                  {selectionSummary.fillColor === 'transparent' ? '∅' : ''}
+                </span>
+                <span>Tô nền</span>
+              </button>
+              {selMenu === 'fillColor' && (
+                <div className="absolute left-0 top-9 z-40 w-[264px] p-3 rounded-2xl bg-white dark:bg-[#1B1F27] border border-slate-200 dark:border-slate-700 shadow-2xl">
+                  <ColorPalettePicker
+                    label="Màu tô nền"
+                    allowTransparent
+                    color={selectionSummary.fillColor}
+                    onChange={applySelectionFillColor}
+                    customColors={customColors}
+                    onAddCustomColor={onAddCustomColor}
+                    onRemoveCustomColor={onRemoveCustomColor}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Line style (solid / dashed / dotted) */}
+          {selectionSummary.hasLineStyle && (
+            <div className="flex items-center gap-0.5 p-0.5 rounded-lg bg-slate-100 dark:bg-slate-800">
+              {(['solid', 'dashed', 'dotted'] as StrokeStyle[]).map((st) => {
+                const active = selectionSummary.lineStyle === st;
+                const dash =
+                  st === 'dashed' ? '5 3.5' : st === 'dotted' ? '0.1 4.5' : undefined;
+                const label =
+                  st === 'solid' ? 'Nét liền' : st === 'dashed' ? 'Nét đứt' : 'Nét chấm';
+                return (
+                  <button
+                    key={st}
+                    type="button"
+                    onClick={() => applySelectionLineStyle(st)}
+                    title={label}
+                    className={`h-6 px-1.5 rounded-md flex items-center gap-1 text-[11px] font-medium cursor-pointer transition-colors ${
+                      active
+                        ? 'bg-white dark:bg-slate-900 text-blue-600 shadow-xs'
+                        : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    <svg viewBox="0 0 24 8" className="w-4.5 h-2" aria-hidden="true">
+                      <line
+                        x1="2"
+                        y1="4"
+                        x2="22"
+                        y2="4"
+                        stroke="currentColor"
+                        strokeWidth="2.4"
+                        strokeLinecap="round"
+                        strokeDasharray={dash}
+                      />
+                    </svg>
+                    {!isCompact && (
+                      <span>
+                        {st === 'solid' ? 'Liền' : st === 'dashed' ? 'Đứt' : 'Chấm'}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Thickness / font size */}
+          {selectionSummary.hasSize && (
+            <div className="relative flex items-center gap-0.5 border border-slate-200 dark:border-slate-700 rounded-lg px-1 h-7">
+              <button
+                type="button"
+                onClick={() => applySelectionSize(selectionSummary.size - 1)}
+                title="Giảm cỡ"
+                className="w-5 h-5 rounded flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                <Minus className="w-3 h-3" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelMenu((m) => (m === 'size' ? null : 'size'))}
+                title="Chỉnh cỡ nét / chữ"
+                className="px-1 text-[11px] font-mono-tabular font-semibold text-slate-700 dark:text-slate-200 cursor-pointer"
+              >
+                {Math.round(selectionSummary.size)}px
+              </button>
+              <button
+                type="button"
+                onClick={() => applySelectionSize(selectionSummary.size + 1)}
+                title="Tăng cỡ"
+                className="w-5 h-5 rounded flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                <Plus className="w-3 h-3" />
+              </button>
+              {selMenu === 'size' && (
+                <div className="absolute left-1/2 -translate-x-1/2 top-9 z-40 w-52 p-3 rounded-2xl bg-white dark:bg-[#1B1F27] border border-slate-200 dark:border-slate-700 shadow-2xl space-y-2">
+                  <div className="flex justify-between text-[11px] font-semibold text-slate-500">
+                    <span>Cỡ nét / Chữ</span>
+                    <span className="font-mono-tabular">{Math.round(selectionSummary.size)} px</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={1}
+                    max={48}
+                    value={Math.round(selectionSummary.size)}
+                    onChange={(e) => applySelectionSize(Number(e.target.value))}
+                    className="w-full accent-blue-600 cursor-pointer"
+                  />
+                  <div className="grid grid-cols-5 gap-1">
+                    {[2, 4, 8, 14, 24].map((sz) => (
+                      <button
+                        key={sz}
+                        type="button"
+                        onClick={() => applySelectionSize(sz)}
+                        className={`py-1 rounded-lg text-[11px] font-mono-tabular cursor-pointer border ${
+                          Math.round(selectionSummary.size) === sz
+                            ? 'border-blue-600 bg-blue-50 dark:bg-blue-950/40 text-blue-600 font-semibold'
+                            : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+                        }`}
+                      >
+                        {sz}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Highlighter mode & opacity when a highlighter stroke is selected */}
+          {selectionSummary.hasHighlighter && (
+            <div className="flex items-center gap-1 pl-1 border-l border-slate-200 dark:border-slate-700">
+              {(['pdf', 'marker', 'block'] as HighlightMode[]).map((hm) => (
+                <button
+                  key={hm}
+                  type="button"
+                  onClick={() => applySelectionHighlightMode(hm)}
+                  title={
+                    hm === 'pdf'
+                      ? 'Tô sáng PDF (hòa trộn rõ chữ)'
+                      : hm === 'marker'
+                        ? 'Bôi màu'
+                        : 'Tô khung chữ nhật'
+                  }
+                  className={`h-6 px-1.5 rounded-md text-[10px] font-medium cursor-pointer border ${
+                    selectionSummary.highlightMode === hm
+                      ? 'border-amber-500 bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300'
+                      : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  {hm === 'pdf' ? 'PDF' : hm === 'marker' ? 'Bôi' : 'Khung'}
+                </button>
+              ))}
+              <select
+                value={Math.round(selectionSummary.highlightOpacity * 100)}
+                onChange={(e) => applySelectionHighlightOpacity(Number(e.target.value) / 100)}
+                title="Độ đậm dạ quang"
+                className="h-6 px-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-[10px] font-mono-tabular text-slate-700 dark:text-slate-200 outline-none cursor-pointer"
+              >
+                <option value={25}>25%</option>
+                <option value={35}>35%</option>
+                <option value={45}>45%</option>
+                <option value={65}>65%</option>
+                <option value={80}>80%</option>
+              </select>
+            </div>
+          )}
+
+          <div className="w-px h-4 bg-slate-200 dark:bg-slate-700 mx-0.5" />
+
+          <button
+            type="button"
+            onClick={duplicateSelected}
+            title="Nhân bản"
+            className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+          >
+            <Copy className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => reorderSelected('front')}
+            title="Đưa lên trên"
+            className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+          >
+            <ArrowUp className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => reorderSelected('back')}
+            title="Đưa xuống dưới"
+            className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+          >
+            <ArrowDown className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={deleteSelected}
+            title="Xóa (Delete)"
+            className="w-7 h-7 rounded-lg flex items-center justify-center text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 cursor-pointer"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* Interactive Selection Overlay Handles */}
       {activeTool === 'select' && selectionBBox && !editingText && (
         <div
           className="pointer-events-none absolute border-[1.5px] border-blue-600"
@@ -1829,42 +2541,6 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
             height: selectionBBox.height * viewport.zoom,
           }}
         >
-          <div className="pointer-events-auto absolute -top-11 left-1/2 -translate-x-1/2 flex items-center gap-0.5 px-1.5 py-1 rounded-xl bg-white dark:bg-[#1B1F27] border border-slate-200 dark:border-slate-700 shadow-lg">
-            <button
-              type="button"
-              onClick={duplicateSelected}
-              title="Nhân bản"
-              className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-            >
-              <Copy className="w-3.5 h-3.5" />
-            </button>
-            <button
-              type="button"
-              onClick={() => reorderSelected('front')}
-              title="Đưa lên trên"
-              className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-            >
-              <ArrowUp className="w-3.5 h-3.5" />
-            </button>
-            <button
-              type="button"
-              onClick={() => reorderSelected('back')}
-              title="Đưa xuống dưới"
-              className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-            >
-              <ArrowDown className="w-3.5 h-3.5" />
-            </button>
-            <div className="w-px h-4 bg-slate-200 dark:bg-slate-700 mx-0.5" />
-            <button
-              type="button"
-              onClick={deleteSelected}
-              title="Xóa (Delete)"
-              className="w-7 h-7 rounded-lg flex items-center justify-center text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 cursor-pointer"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
-          </div>
-
           <div
             onPointerDown={(e) => {
               e.stopPropagation();

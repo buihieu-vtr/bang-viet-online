@@ -33,6 +33,7 @@ import {
 } from 'lucide-react';
 import {
   EraserMode,
+  PenSlot,
   SelectMode,
   ShapeType,
   STICKY_COLORS,
@@ -44,6 +45,9 @@ import { ColorPalettePicker } from './ColorPalettePicker';
 interface ToolDockProps {
   activeTool: ToolType;
   onSelectTool: (tool: ToolType) => void;
+  activePenSlot: PenSlot;
+  onUpdatePenSlot: (slot: PenSlot) => void;
+  hasSelection?: boolean;
   selectMode: SelectMode;
   onSelectModeChange: (mode: SelectMode) => void;
   eraserMode: EraserMode;
@@ -96,6 +100,9 @@ const SHAPE_OPTIONS: { id: ShapeType; label: string; icon: React.ReactNode }[] =
 export const ToolDock: React.FC<ToolDockProps> = ({
   activeTool,
   onSelectTool,
+  activePenSlot,
+  onUpdatePenSlot,
+  hasSelection = false,
   selectMode,
   onSelectModeChange,
   eraserMode,
@@ -129,7 +136,7 @@ export const ToolDock: React.FC<ToolDockProps> = ({
   onRemoveCustomColor,
   isCompact: isCompactProp,
 }) => {
-  const [openMenu, setOpenMenu] = useState<'select' | 'eraser' | 'shape' | 'insert' | null>(null);
+  const [openMenu, setOpenMenu] = useState<'select' | 'highlighter' | 'eraser' | 'shape' | 'insert' | null>(null);
   const [shapeColorTab, setShapeColorTab] = useState<'stroke' | 'fill'>('stroke');
   const [localCompact, setLocalCompact] = useState(() =>
     typeof window !== 'undefined'
@@ -169,7 +176,7 @@ export const ToolDock: React.FC<ToolDockProps> = ({
     id: ToolType,
     label: string,
     icon: React.ReactNode,
-    menuKey?: 'select' | 'eraser' | 'shape'
+    menuKey?: 'select' | 'highlighter' | 'eraser' | 'shape'
   ) => {
     const isActive = activeTool === id;
     return (
@@ -231,7 +238,7 @@ export const ToolDock: React.FC<ToolDockProps> = ({
 
         {toolBtn('pen', 'Bút mực mượt (Phím P)', <Pen className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />)}
         {toolBtn('pencil', 'Bút chì phác thảo', <Pencil className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />)}
-        {toolBtn('highlighter', 'Bút dạ quang', <Highlighter className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />)}
+        {toolBtn('highlighter', 'Bút dạ quang (Tô sáng PDF / Bôi màu)', <Highlighter className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />, 'highlighter')}
         {toolBtn('eraser', 'Tẩy nét / Tẩy vùng (Phím E)', <Eraser className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />, 'eraser')}
 
         <div
@@ -320,6 +327,151 @@ export const ToolDock: React.FC<ToolDockProps> = ({
           </div>
         )}
 
+        {/* Popover: Highlighter Modes (Tô sáng PDF / Bôi màu / Tô khung) */}
+        {openMenu === 'highlighter' && (
+          <div className={`${isCompact ? 'w-full' : 'w-72 max-h-[75dvh] overflow-y-auto'} rounded-xl bg-white dark:bg-[#1B1F27] border border-slate-200 dark:border-slate-700 shadow-xl p-3 space-y-3`}>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-slate-900 dark:text-slate-100">
+                Bút dạ quang & Tô sáng PDF
+              </span>
+              <span className="text-[11px] font-mono-tabular text-slate-500">
+                {activePenSlot.width}px
+              </span>
+            </div>
+
+            <div className="grid grid-cols-3 gap-1 p-1 rounded-lg bg-slate-100 dark:bg-slate-800">
+              {(
+                [
+                  { id: 'pdf', label: 'Tô sáng PDF', desc: 'Rõ chữ PDF' },
+                  { id: 'marker', label: 'Bôi màu', desc: 'Phủ màu đều' },
+                  { id: 'block', label: 'Tô khung', desc: 'Khối chữ nhật' },
+                ] as const
+              ).map((hm) => {
+                const active = (activePenSlot.highlightMode || 'pdf') === hm.id;
+                return (
+                  <button
+                    key={hm.id}
+                    type="button"
+                    onClick={() =>
+                      onUpdatePenSlot({
+                        ...activePenSlot,
+                        tool: 'highlighter',
+                        highlightMode: hm.id,
+                        opacity:
+                          hm.id === 'marker'
+                            ? Math.max(0.55, activePenSlot.opacity)
+                            : Math.min(0.6, activePenSlot.opacity),
+                      })
+                    }
+                    className={`py-1.5 px-1 rounded-md flex flex-col items-center cursor-pointer transition-colors ${
+                      active
+                        ? 'bg-amber-500 text-white shadow-xs'
+                        : 'text-slate-600 dark:text-slate-300 hover:bg-white/60 dark:hover:bg-slate-700/60'
+                    }`}
+                  >
+                    <span className="text-[11px] font-semibold leading-tight">{hm.label}</span>
+                    <span className={`text-[9px] leading-tight ${active ? 'text-amber-50' : 'text-slate-400'}`}>
+                      {hm.desc}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {(activePenSlot.highlightMode || 'pdf') !== 'block' && (
+              <label className="flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg bg-amber-50/70 dark:bg-amber-950/25 border border-amber-200/70 dark:border-amber-800/50 text-[11px] text-slate-700 dark:text-slate-200 cursor-pointer">
+                <span>Tô thẳng hàng (như tô dòng PDF)</span>
+                <input
+                  type="checkbox"
+                  checked={Boolean(activePenSlot.highlightStraight)}
+                  onChange={(e) =>
+                    onUpdatePenSlot({
+                      ...activePenSlot,
+                      tool: 'highlighter',
+                      highlightStraight: e.target.checked,
+                    })
+                  }
+                  className="w-4 h-4 accent-amber-500 rounded cursor-pointer"
+                />
+              </label>
+            )}
+
+            <div className="space-y-1.5">
+              <div className="flex justify-between text-[11px] text-slate-500">
+                <span>Cỡ đầu bút</span>
+                <span className="font-mono-tabular font-semibold text-slate-800 dark:text-slate-100">
+                  {activePenSlot.width} px
+                </span>
+              </div>
+              <div className="grid grid-cols-5 gap-1">
+                {[10, 16, 22, 30, 40].map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() =>
+                      onUpdatePenSlot({ ...activePenSlot, tool: 'highlighter', width: preset })
+                    }
+                    className={`h-7 rounded-md border text-[10px] font-mono-tabular font-medium cursor-pointer ${
+                      Math.abs(activePenSlot.width - preset) < 1
+                        ? 'border-amber-500 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300'
+                        : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+                    }`}
+                  >
+                    {preset}
+                  </button>
+                ))}
+              </div>
+              <input
+                type="range"
+                min={6}
+                max={48}
+                step={1}
+                value={activePenSlot.width}
+                onChange={(e) =>
+                  onUpdatePenSlot({
+                    ...activePenSlot,
+                    tool: 'highlighter',
+                    width: parseFloat(e.target.value),
+                  })
+                }
+                className="w-full accent-amber-500 cursor-pointer"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <div className="flex justify-between text-[11px] text-slate-500">
+                <span>Độ đậm màu</span>
+                <span className="font-mono-tabular">{Math.round(activePenSlot.opacity * 100)}%</span>
+              </div>
+              <input
+                type="range"
+                min={0.15}
+                max={1}
+                step={0.05}
+                value={activePenSlot.opacity}
+                onChange={(e) =>
+                  onUpdatePenSlot({
+                    ...activePenSlot,
+                    tool: 'highlighter',
+                    opacity: parseFloat(e.target.value),
+                  })
+                }
+                className="w-full accent-amber-500 cursor-pointer"
+              />
+            </div>
+
+            <ColorPalettePicker
+              color={activePenSlot.color}
+              onChange={(hex) =>
+                onUpdatePenSlot({ ...activePenSlot, tool: 'highlighter', color: hex })
+              }
+              customColors={customColors}
+              onAddCustomColor={onAddCustomColor}
+              onRemoveCustomColor={onRemoveCustomColor}
+            />
+          </div>
+        )}
+
         {/* Popover: Eraser Mode */}
         {openMenu === 'eraser' && (
           <div className={`${isCompact ? 'w-full' : 'w-60'} rounded-xl bg-white dark:bg-[#1B1F27] border border-slate-200 dark:border-slate-700 shadow-xl p-3 space-y-3`}>
@@ -405,68 +557,11 @@ export const ToolDock: React.FC<ToolDockProps> = ({
               ))}
             </div>
 
-            <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-2.5">
-              <div className="grid grid-cols-2 gap-1 p-1 rounded-lg bg-slate-100 dark:bg-slate-800">
-                <button
-                  type="button"
-                  onClick={() => setShapeColorTab('stroke')}
-                  className={`py-1.5 text-[11px] font-semibold rounded-md flex items-center justify-center gap-1.5 cursor-pointer ${
-                    shapeColorTab === 'stroke'
-                      ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'
-                      : 'text-slate-500'
-                  }`}
-                >
-                  <span
-                    className="w-3 h-3 rounded-full border border-black/15"
-                    style={{ backgroundColor: shapeStrokeColor }}
-                  />
-                  Màu viền
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShapeColorTab('fill')}
-                  className={`py-1.5 text-[11px] font-semibold rounded-md flex items-center justify-center gap-1.5 cursor-pointer ${
-                    shapeColorTab === 'fill'
-                      ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'
-                      : 'text-slate-500'
-                  }`}
-                >
-                  <span
-                    className="w-3 h-3 rounded-full border border-black/15"
-                    style={{
-                      backgroundColor:
-                        shapeFillColor === 'transparent' ? '#ffffff' : shapeFillColor,
-                    }}
-                  />
-                  Màu tô nền
-                </button>
-              </div>
-
-              {shapeColorTab === 'stroke' ? (
-                <ColorPalettePicker
-                  color={shapeStrokeColor}
-                  onChange={onShapeStrokeColorChange}
-                  customColors={customColors}
-                  onAddCustomColor={onAddCustomColor}
-                  onRemoveCustomColor={onRemoveCustomColor}
-                />
-              ) : (
-                <ColorPalettePicker
-                  color={shapeFillColor}
-                  onChange={onShapeFillColorChange}
-                  customColors={customColors}
-                  onAddCustomColor={onAddCustomColor}
-                  onRemoveCustomColor={onRemoveCustomColor}
-                  allowTransparent
-                />
-              )}
-            </div>
-
-            {/* Shape Line Style & Border Thickness */}
+            {/* Shape Line Style & Border Thickness (placed directly below shape picker for instant access) */}
             <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-2.5">
               <div className="space-y-1">
                 <div className="text-[11px] font-medium text-slate-500">
-                  Kiểu nét viền
+                  Kiểu nét hình & đường thẳng
                 </div>
                 <div className="grid grid-cols-3 gap-1 p-1 rounded-lg bg-slate-100 dark:bg-slate-800">
                   {(
@@ -540,6 +635,63 @@ export const ToolDock: React.FC<ToolDockProps> = ({
                   className="w-full accent-blue-600 cursor-pointer"
                 />
               </div>
+            </div>
+
+            <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-2.5">
+              <div className="grid grid-cols-2 gap-1 p-1 rounded-lg bg-slate-100 dark:bg-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setShapeColorTab('stroke')}
+                  className={`py-1.5 text-[11px] font-semibold rounded-md flex items-center justify-center gap-1.5 cursor-pointer ${
+                    shapeColorTab === 'stroke'
+                      ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'
+                      : 'text-slate-500'
+                  }`}
+                >
+                  <span
+                    className="w-3 h-3 rounded-full border border-black/15"
+                    style={{ backgroundColor: shapeStrokeColor }}
+                  />
+                  Màu viền
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShapeColorTab('fill')}
+                  className={`py-1.5 text-[11px] font-semibold rounded-md flex items-center justify-center gap-1.5 cursor-pointer ${
+                    shapeColorTab === 'fill'
+                      ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'
+                      : 'text-slate-500'
+                  }`}
+                >
+                  <span
+                    className="w-3 h-3 rounded-full border border-black/15"
+                    style={{
+                      backgroundColor:
+                        shapeFillColor === 'transparent' ? '#ffffff' : shapeFillColor,
+                    }}
+                  />
+                  Màu tô nền
+                </button>
+              </div>
+
+              {shapeColorTab === 'stroke' ? (
+                <ColorPalettePicker
+                  color={shapeStrokeColor}
+                  onChange={onShapeStrokeColorChange}
+                  customColors={customColors}
+                  onAddCustomColor={onAddCustomColor}
+                  onRemoveCustomColor={onRemoveCustomColor}
+                />
+              ) : (
+                <ColorPalettePicker
+                  color={shapeFillColor}
+                  onChange={onShapeFillColorChange}
+                  customColors={customColors}
+                  onAddCustomColor={onAddCustomColor}
+                  onRemoveCustomColor={onRemoveCustomColor}
+                  allowTransparent
+                />
+              )}
             </div>
           </div>
         )}
@@ -646,6 +798,196 @@ export const ToolDock: React.FC<ToolDockProps> = ({
             </div>
           </div>
         )}
+        </div>
+      )}
+
+      {/* Quick Floating Bar for Active Shape Tool (Line Style, Quick Shapes, Width & Color) */}
+      {activeTool === 'shape' && !hasSelection && (
+        <div
+          className={`absolute z-25 flex items-center gap-1 rounded-xl bg-white/95 dark:bg-[#161920]/95 backdrop-blur-md border border-slate-200 dark:border-slate-800 shadow-lg select-none px-2 py-1 max-w-[calc(100%-16px)] overflow-x-auto no-scrollbar ${
+            isCompact ? 'top-11 left-1/2 -translate-x-1/2' : 'top-3 left-1/2 -translate-x-1/2'
+          }`}
+        >
+          {(
+            [
+              { id: 'line', label: 'Đoạn thẳng', icon: <Minus className="w-3.5 h-3.5 -rotate-45" /> },
+              { id: 'arrow', label: 'Mũi tên', icon: <ArrowUpRight className="w-3.5 h-3.5" /> },
+              { id: 'rect', label: 'Chữ nhật', icon: <Square className="w-3.5 h-3.5" /> },
+              { id: 'ellipse', label: 'Tròn / Elip', icon: <Circle className="w-3.5 h-3.5" /> },
+            ] as const
+          ).map((q) => (
+            <button
+              key={q.id}
+              type="button"
+              title={q.label}
+              onClick={() => onSelectShape(q.id)}
+              className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 cursor-pointer transition-colors ${
+                activeShape === q.id
+                  ? 'bg-blue-600 text-white'
+                  : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              {q.icon}
+            </button>
+          ))}
+
+          <div className="w-px h-4 bg-slate-200 dark:bg-slate-700 mx-0.5 shrink-0" />
+
+          {(
+            [
+              { id: 'solid', label: 'Nét liền', dash: undefined },
+              { id: 'dashed', label: 'Nét đứt', dash: '5 3.5' },
+              { id: 'dotted', label: 'Nét chấm', dash: '0.1 4.5' },
+            ] as const
+          ).map((st) => {
+            const active = shapeLineStyle === st.id;
+            return (
+              <button
+                key={st.id}
+                type="button"
+                title={st.label}
+                onClick={() => onShapeLineStyleChange(st.id)}
+                className={`h-7 px-1.5 rounded-lg flex items-center gap-1 text-[11px] font-medium shrink-0 cursor-pointer transition-colors ${
+                  active
+                    ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 ring-1 ring-blue-500/40'
+                    : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                <svg viewBox="0 0 24 10" className="w-5 h-2.5" aria-hidden="true">
+                  <line
+                    x1="2"
+                    y1="5"
+                    x2="22"
+                    y2="5"
+                    stroke="currentColor"
+                    strokeWidth={2.4}
+                    strokeLinecap="round"
+                    strokeDasharray={st.dash}
+                  />
+                </svg>
+                <span className="hidden sm:inline">{st.label}</span>
+              </button>
+            );
+          })}
+
+          <div className="w-px h-4 bg-slate-200 dark:bg-slate-700 mx-0.5 shrink-0" />
+
+          <div className="flex items-center gap-0.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => onShapeStrokeWidthChange(Math.max(1, Number((shapeStrokeWidth - 0.5).toFixed(1))))}
+              className="w-6 h-6 rounded-md text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              title="Giảm cỡ viền"
+            >
+              -
+            </button>
+            <span className="text-[11px] font-mono-tabular font-semibold min-w-[34px] text-center text-slate-700 dark:text-slate-200">
+              {shapeStrokeWidth}px
+            </span>
+            <button
+              type="button"
+              onClick={() => onShapeStrokeWidthChange(Math.min(20, Number((shapeStrokeWidth + 0.5).toFixed(1))))}
+              className="w-6 h-6 rounded-md text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              title="Tăng cỡ viền"
+            >
+              +
+            </button>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setOpenMenu((m) => (m === 'shape' ? null : 'shape'))}
+            title="Mở bảng hình học & màu sắc"
+            className="h-7 px-1.5 rounded-lg flex items-center gap-1 text-[11px] font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0 cursor-pointer"
+          >
+            <span
+              className="w-3.5 h-3.5 rounded-full border border-black/20 dark:border-white/25"
+              style={{ backgroundColor: shapeStrokeColor }}
+            />
+            <span className="hidden md:inline">Thêm</span>
+          </button>
+        </div>
+      )}
+
+      {/* Quick Floating Bar for Active Highlighter Tool (PDF Highlight / Color Marker / Block + Straight) */}
+      {activeTool === 'highlighter' && !hasSelection && (
+        <div
+          className={`absolute z-25 flex items-center gap-1 rounded-xl bg-white/95 dark:bg-[#161920]/95 backdrop-blur-md border border-slate-200 dark:border-slate-800 shadow-lg select-none px-2 py-1 max-w-[calc(100%-16px)] overflow-x-auto no-scrollbar ${
+            isCompact ? 'top-11 left-1/2 -translate-x-1/2' : 'top-3 left-1/2 -translate-x-1/2'
+          }`}
+        >
+          {(
+            [
+              { id: 'pdf', label: 'Tô sáng PDF' },
+              { id: 'marker', label: 'Bôi màu' },
+              { id: 'block', label: 'Tô khung' },
+            ] as const
+          ).map((hm) => {
+            const active = (activePenSlot.highlightMode || 'pdf') === hm.id;
+            return (
+              <button
+                key={hm.id}
+                type="button"
+                onClick={() =>
+                  onUpdatePenSlot({
+                    ...activePenSlot,
+                    tool: 'highlighter',
+                    highlightMode: hm.id,
+                    opacity:
+                      hm.id === 'marker'
+                        ? Math.max(0.55, activePenSlot.opacity)
+                        : Math.min(0.6, activePenSlot.opacity),
+                  })
+                }
+                className={`h-7 px-2 rounded-lg text-[11px] font-medium shrink-0 cursor-pointer transition-colors ${
+                  active
+                    ? 'bg-amber-500 text-white shadow-xs'
+                    : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                {hm.label}
+              </button>
+            );
+          })}
+
+          {(activePenSlot.highlightMode || 'pdf') !== 'block' && (
+            <>
+              <div className="w-px h-4 bg-slate-200 dark:bg-slate-700 mx-0.5 shrink-0" />
+              <button
+                type="button"
+                onClick={() =>
+                  onUpdatePenSlot({
+                    ...activePenSlot,
+                    tool: 'highlighter',
+                    highlightStraight: !activePenSlot.highlightStraight,
+                  })
+                }
+                title="Tự động giữ thẳng hàng khi tô dòng PDF"
+                className={`h-7 px-2 rounded-lg text-[11px] font-medium shrink-0 cursor-pointer transition-colors ${
+                  activePenSlot.highlightStraight
+                    ? 'bg-blue-600 text-white'
+                    : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                Thẳng hàng
+              </button>
+            </>
+          )}
+
+          <div className="w-px h-4 bg-slate-200 dark:bg-slate-700 mx-0.5 shrink-0" />
+
+          <button
+            type="button"
+            onClick={() => setOpenMenu((m) => (m === 'highlighter' ? null : 'highlighter'))}
+            title="Chỉnh màu, cỡ & độ đậm bút dạ quang"
+            className="h-7 px-1.5 rounded-lg flex items-center gap-1.5 text-[11px] font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0 cursor-pointer"
+          >
+            <span
+              className="w-3.5 h-3.5 rounded-xs border border-black/20"
+              style={{ backgroundColor: activePenSlot.color, opacity: Math.max(0.5, activePenSlot.opacity) }}
+            />
+            <span className="font-mono-tabular">{activePenSlot.width}px</span>
+          </button>
         </div>
       )}
 
