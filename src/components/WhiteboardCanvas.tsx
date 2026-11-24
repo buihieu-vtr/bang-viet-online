@@ -2,7 +2,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowDown,
   ArrowUp,
+  Check,
   Copy,
+  Magnet,
   Minus,
   Plus,
   RotateCw,
@@ -15,6 +17,7 @@ import {
   EraserMode,
   HighlightMode,
   ImageItem,
+  OsnapSettings,
   PAGE_DIMENSIONS,
   PenSlot,
   Point,
@@ -22,6 +25,7 @@ import {
   SelectMode,
   ShapeItem,
   ShapeType,
+  SnapType,
   StickyItem,
   StrokeItem,
   StrokeStyle,
@@ -46,6 +50,17 @@ import {
   translateElement,
   uid,
 } from '../utils/geometry';
+import {
+  EllipseSnapInfo,
+  findBestOsnap,
+  isLinearShapeType,
+  OSNAP_META,
+  renderAngleHud,
+  renderOsnapMarker,
+  resolveDeferredTangentStart,
+  SnapCandidate,
+  solveCommonTangent,
+} from '../utils/osnap';
 import {
   drawAluminumBoardFrame,
   drawRealisticBoardSurface,
@@ -86,10 +101,13 @@ interface WhiteboardCanvasProps {
   onSelectPage: (pageId: string) => void;
   scrollToPageRequest: { pageId: string; seq: number } | null;
   onSelectTool: (tool: ToolType) => void;
+  onSelectShape?: (shape: ShapeType) => void;
   customColors: string[];
   onAddCustomColor: (hex: string) => void;
   onRemoveCustomColor: (hex: string) => void;
   isCompact?: boolean;
+  osnap: OsnapSettings;
+  onOsnapChange: React.Dispatch<React.SetStateAction<OsnapSettings>>;
 }
 
 interface PageLayout {
@@ -143,6 +161,8 @@ type InteractionMode =
       shape: ShapeItem;
       startX: number;
       startY: number;
+      deferredEllipse?: EllipseSnapInfo;
+      deferredAnchor?: { x: number; y: number };
     }
   | { type: 'eraseStroke'; pageId: string; offsetX: number; offsetY: number }
   | { type: 'erasePartial'; pageId: string; offsetX: number; offsetY: number }
@@ -212,10 +232,13 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
   onSelectPage,
   scrollToPageRequest,
   onSelectTool,
+  onSelectShape,
   customColors,
   onAddCustomColor,
   onRemoveCustomColor,
   isCompact = false,
+  osnap,
+  onOsnapChange,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -226,6 +249,13 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
   const interactionRef = useRef<InteractionMode>({ type: 'none' });
   const liveDrawStrokeRef = useRef<{ pageId: string; stroke: StrokeItem } | null>(null);
   const liveShapeRef = useRef<{ pageId: string; shape: ShapeItem } | null>(null);
+  const osnapCandidateRef = useRef<{
+    pageId: string;
+    offsetX: number;
+    offsetY: number;
+    snap: SnapCandidate;
+  } | null>(null);
+  const shiftAngleLineRef = useRef<boolean>(false);
   const lassoPointsRef = useRef<{ offsetX: number; offsetY: number; points: { x: number; y: number }[] } | null>(null);
   const boxSelectRectRef = useRef<{ offsetX: number; offsetY: number; box: BBox } | null>(null);
   const cursorWorldRef = useRef<{ x: number; y: number } | null>(null);
@@ -237,6 +267,19 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
   const [canvasSize, setCanvasSize] = useState({ width: 1200, height: 800 });
   const [renderTick, setRenderTick] = useState(0);
   const [selMenu, setSelMenu] = useState<null | 'strokeColor' | 'fillColor' | 'size'>(null);
+  const [osnapMenu, setOsnapMenu] = useState<{ x: number; y: number } | null>(null);
+  const osnapMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!osnapMenu) return;
+    const onDown = (ev: MouseEvent) => {
+      if (osnapMenuRef.current && !osnapMenuRef.current.contains(ev.target as Node)) {
+        setOsnapMenu(null);
+      }
+    };
+    window.addEventListener('mousedown', onDown);
+    return () => window.removeEventListener('mousedown', onDown);
+  }, [osnapMenu]);
 
   useEffect(() => {
     if (selectedIds.length === 0 || activeTool !== 'select') {
@@ -459,9 +502,14 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
         onCommitPageElements(page.id, next);
         onSelectedIdsChange([]);
       }
+      if (e.key === 'F3') {
+        e.preventDefault();
+        onOsnapChange((prev) => ({ ...prev, enabled: !prev.enabled, oneShot: null }));
+      }
       if (e.key === 'Escape') {
         onSelectedIdsChange([]);
         setEditingText(null);
+        setOsnapMenu(null);
       }
     };
     const onKeyUp = (e: KeyboardEvent) => {
@@ -475,7 +523,7 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
     };
-  }, [page.id, page.elements, selectedIds, onCommitPageElements, onSelectedIdsChange]);
+  }, [page.id, page.elements, selectedIds, onCommitPageElements, onSelectedIdsChange, onOsnapChange]);
 
   // Main static high-DPI Canvas render pass (background + committed elements only)
   useEffect(() => {
@@ -656,6 +704,7 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
 
     const liveDraw = liveDrawStrokeRef.current;
     const liveSh = liveShapeRef.current;
+    const osnapHit = osnapCandidateRef.current;
     const lasso = lassoPointsRef.current;
     const boxRect = boxSelectRectRef.current;
     const curWorld = cursorWorldRef.current;
@@ -664,7 +713,7 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
       (activeTool === 'pen' || activeTool === 'pencil' || activeTool === 'highlighter');
     const hasLaser = laserPointsRef.current.length > 0;
 
-    if (!liveDraw && !liveSh && !lasso && !boxRect && !(activeTool === 'eraser' && curWorld) && !(isPenHover && curWorld) && !hasLaser) {
+    if (!liveDraw && !liveSh && !osnapHit && !lasso && !boxRect && !(activeTool === 'eraser' && curWorld) && !(isPenHover && curWorld) && !hasLaser) {
       return;
     }
 
@@ -691,6 +740,11 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
     }
 
     if (liveSh) {
+      const sh = liveSh.shape;
+      const isLinear =
+        sh.shapeType === 'line' ||
+        sh.shapeType === 'arrow' ||
+        sh.shapeType === 'doubleArrow';
       if (isPagedMode) {
         const L = pageLayouts.find((pl) => pl.page.id === liveSh.pageId);
         if (L) {
@@ -699,12 +753,44 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
           ctx.beginPath();
           ctx.rect(0, 0, L.width, L.height);
           ctx.clip();
-          renderShape(ctx, liveSh.shape);
+          renderShape(ctx, sh);
           ctx.restore();
+          if (isLinear) {
+            ctx.save();
+            ctx.translate(L.x, L.topY);
+            renderAngleHud(
+              ctx,
+              sh.x,
+              sh.y,
+              sh.x + sh.width,
+              sh.y + sh.height,
+              viewport.zoom,
+              shiftAngleLineRef.current
+            );
+            ctx.restore();
+          }
         }
       } else {
-        renderShape(ctx, liveSh.shape);
+        renderShape(ctx, sh);
+        if (isLinear) {
+          renderAngleHud(
+            ctx,
+            sh.x,
+            sh.y,
+            sh.x + sh.width,
+            sh.y + sh.height,
+            viewport.zoom,
+            shiftAngleLineRef.current
+          );
+        }
       }
+    }
+
+    if (osnapHit) {
+      ctx.save();
+      ctx.translate(osnapHit.offsetX, osnapHit.offsetY);
+      renderOsnapMarker(ctx, osnapHit.snap, viewport.zoom);
+      ctx.restore();
     }
 
     if (lasso && lasso.points.length > 1) {
@@ -1062,14 +1148,29 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
       return;
     }
 
-    // Shapes
+    // Shapes (with CAD OSNAP start point)
     if (activeTool === 'shape') {
+      const startSnap = findBestOsnap(
+        targetPage.elements,
+        localPt,
+        null,
+        osnap,
+        10 / viewport.zoom,
+        { drawingShapeType: activeShape }
+      );
+      const sx = startSnap ? startSnap.x : localPt.x;
+      const sy = startSnap ? startSnap.y : localPt.y;
+      osnapCandidateRef.current = startSnap
+        ? { pageId: targetPage.id, offsetX: offX, offsetY: offY, snap: startSnap }
+        : null;
+      shiftAngleLineRef.current = false;
+
       const shape: ShapeItem = {
         id: uid('shape'),
         type: 'shape',
         shapeType: activeShape,
-        x: localPt.x,
-        y: localPt.y,
+        x: sx,
+        y: sy,
         width: 1,
         height: 1,
         rotation: 0,
@@ -1088,8 +1189,14 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
         offsetX: offX,
         offsetY: offY,
         shape,
-        startX: localPt.x,
-        startY: localPt.y,
+        startX: sx,
+        startY: sy,
+        deferredEllipse:
+          isLinearShapeType(activeShape) ? startSnap?.deferredEllipse : undefined,
+        deferredAnchor:
+          isLinearShapeType(activeShape) && startSnap?.deferredEllipse
+            ? { x: sx, y: sy }
+            : undefined,
       };
       liveShapeRef.current = { pageId: targetPage.id, shape };
       drawOverlay();
@@ -1276,6 +1383,27 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
 
     let mode = interactionRef.current;
     if (mode.type === 'none') {
+      if (activeTool === 'shape' && (osnap.enabled || osnap.oneShot)) {
+        const target = findPageTargetAtWorld(pt);
+        const hLocal = { x: pt.x - target.offsetX, y: pt.y - target.offsetY };
+        const snap = findBestOsnap(
+          target.page.elements,
+          hLocal,
+          null,
+          osnap,
+          10 / viewport.zoom,
+          { drawingShapeType: activeShape }
+        );
+        osnapCandidateRef.current = snap
+          ? { pageId: target.page.id, offsetX: target.offsetX, offsetY: target.offsetY, snap }
+          : null;
+        drawOverlay();
+        return;
+      }
+      if (osnapCandidateRef.current) {
+        osnapCandidateRef.current = null;
+        drawOverlay();
+      }
       if (
         activeTool === 'eraser' ||
         (e.pointerType === 'pen' &&
@@ -1370,12 +1498,22 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
           movedPx > 4
             ? { x: wx - pending.offsetX, y: wy - pending.offsetY }
             : pending.startLocal;
+        const startSnap = findBestOsnap(
+          targetPage.elements,
+          startCoords,
+          null,
+          osnap,
+          10 / viewport.zoom,
+          { drawingShapeType: activeShape }
+        );
+        const sx = startSnap ? startSnap.x : startCoords.x;
+        const sy = startSnap ? startSnap.y : startCoords.y;
         const shape: ShapeItem = {
           id: uid('shape'),
           type: 'shape',
           shapeType: activeShape,
-          x: startCoords.x,
-          y: startCoords.y,
+          x: sx,
+          y: sy,
           width: 1,
           height: 1,
           rotation: 0,
@@ -1394,8 +1532,14 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
           offsetX: pending.offsetX,
           offsetY: pending.offsetY,
           shape,
-          startX: startCoords.x,
-          startY: startCoords.y,
+          startX: sx,
+          startY: sy,
+          deferredEllipse:
+            isLinearShapeType(activeShape) ? startSnap?.deferredEllipse : undefined,
+          deferredAnchor:
+            isLinearShapeType(activeShape) && startSnap?.deferredEllipse
+              ? { x: sx, y: sy }
+              : undefined,
         };
         liveShapeRef.current = { pageId: pending.pageId, shape };
         if (selectedIds.length > 0) onSelectedIdsChange([]);
@@ -1568,17 +1712,131 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
     }
 
     if (mode.type === 'shape') {
-      let w = localPt.x - mode.startX;
-      let h = localPt.y - mode.startY;
-      if (e.shiftKey) {
-        const s = Math.max(Math.abs(w), Math.abs(h));
-        w = w < 0 ? -s : s;
-        h = h < 0 ? -s : s;
+      const targetPage = pages.find((p) => p.id === mode.pageId) || page;
+      const isLinear = isLinearShapeType(mode.shape.shapeType);
+      const baseStartX = mode.deferredAnchor ? mode.deferredAnchor.x : mode.startX;
+      const baseStartY = mode.deferredAnchor ? mode.deferredAnchor.y : mode.startY;
+      const fromPt = { x: baseStartX, y: baseStartY };
+      const snap = findBestOsnap(
+        targetPage.elements,
+        localPt,
+        fromPt,
+        osnap,
+        10 / viewport.zoom,
+        { drawingShapeType: mode.shape.shapeType }
+      );
+
+      let activeStartX = baseStartX;
+      let activeStartY = baseStartY;
+      let endPt = { x: localPt.x, y: localPt.y };
+
+      if (snap) {
+        if (
+          isLinear &&
+          mode.deferredEllipse &&
+          mode.deferredAnchor &&
+          snap.type === 'tangent' &&
+          snap.deferredEllipse
+        ) {
+          const common = solveCommonTangent(
+            mode.deferredEllipse,
+            mode.deferredAnchor,
+            snap.deferredEllipse,
+            snap
+          );
+          if (common) {
+            activeStartX = common.p1.x;
+            activeStartY = common.p1.y;
+            endPt = common.p2;
+            osnapCandidateRef.current = {
+              pageId: mode.pageId,
+              offsetX: mode.offsetX,
+              offsetY: mode.offsetY,
+              snap: { ...snap, x: common.p2.x, y: common.p2.y },
+            };
+          } else {
+            endPt = { x: snap.x, y: snap.y };
+            osnapCandidateRef.current = {
+              pageId: mode.pageId,
+              offsetX: mode.offsetX,
+              offsetY: mode.offsetY,
+              snap,
+            };
+          }
+        } else {
+          endPt = { x: snap.x, y: snap.y };
+          if (isLinear && mode.deferredEllipse && mode.deferredAnchor) {
+            const tangentStart = resolveDeferredTangentStart(
+              mode.deferredEllipse,
+              endPt,
+              mode.deferredAnchor
+            );
+            if (tangentStart) {
+              activeStartX = tangentStart.x;
+              activeStartY = tangentStart.y;
+            }
+          }
+          osnapCandidateRef.current = {
+            pageId: mode.pageId,
+            offsetX: mode.offsetX,
+            offsetY: mode.offsetY,
+            snap,
+          };
+        }
+        shiftAngleLineRef.current = false;
+      } else {
+        osnapCandidateRef.current = null;
+        if (e.shiftKey) {
+          if (isLinear) {
+            const rawW = localPt.x - baseStartX;
+            const rawH = localPt.y - baseStartY;
+            const len = Math.hypot(rawW, rawH);
+            if (len > 1) {
+              const rawAngle = Math.atan2(rawH, rawW);
+              const step = Math.PI / 4; // 8 CAD directions: 0°, 45°, 90°, 135°, 180°, 225°, 270°, 315°
+              const snappedAngle = Math.round(rawAngle / step) * step;
+              let sw = Math.cos(snappedAngle) * len;
+              let sh = Math.sin(snappedAngle) * len;
+              if (Math.abs(sw) < 1e-6) sw = 0;
+              if (Math.abs(sh) < 1e-6) sh = 0;
+              endPt = { x: baseStartX + sw, y: baseStartY + sh };
+            }
+            shiftAngleLineRef.current = true;
+          } else {
+            const rawW = localPt.x - baseStartX;
+            const rawH = localPt.y - baseStartY;
+            const s = Math.max(Math.abs(rawW), Math.abs(rawH));
+            endPt = {
+              x: baseStartX + (rawW < 0 ? -s : s),
+              y: baseStartY + (rawH < 0 ? -s : s),
+            };
+            shiftAngleLineRef.current = false;
+          }
+        } else {
+          shiftAngleLineRef.current = false;
+        }
+
+        if (isLinear && mode.deferredEllipse && mode.deferredAnchor) {
+          const tangentStart = resolveDeferredTangentStart(
+            mode.deferredEllipse,
+            endPt,
+            mode.deferredAnchor
+          );
+          if (tangentStart) {
+            activeStartX = tangentStart.x;
+            activeStartY = tangentStart.y;
+          }
+        }
       }
+
+      mode.startX = activeStartX;
+      mode.startY = activeStartY;
       mode.shape = {
         ...mode.shape,
-        width: w,
-        height: h,
+        x: activeStartX,
+        y: activeStartY,
+        width: endPt.x - activeStartX,
+        height: endPt.y - activeStartY,
       };
       liveShapeRef.current = { pageId: mode.pageId, shape: mode.shape };
       drawOverlay();
@@ -1766,7 +2024,12 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
     if (mode.type === 'shape') {
       const targetPage = pages.find((p) => p.id === mode.pageId) || page;
       liveShapeRef.current = null;
+      osnapCandidateRef.current = null;
+      shiftAngleLineRef.current = false;
       drawOverlay();
+      if (osnap.oneShot) {
+        onOsnapChange((prev) => ({ ...prev, oneShot: null }));
+      }
       if (Math.hypot(mode.shape.width, mode.shape.height) >= 8) {
         onCommitPageElements(targetPage.id, [...targetPage.elements, mode.shape]);
       }
@@ -2197,15 +2460,33 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
     >
       <canvas
         ref={canvasRef}
-        onPointerDown={handlePointerDown}
+        onPointerDown={(e) => {
+          if (osnapMenu && e.button === 0) {
+            setOsnapMenu(null);
+          }
+          handlePointerDown(e);
+        }}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
         onPointerLeave={() => {
           cursorWorldRef.current = null;
+          osnapCandidateRef.current = null;
           drawOverlay();
         }}
         onDoubleClick={handleDoubleClick}
+        onContextMenu={(e) => {
+          if (e.shiftKey) {
+            e.preventDefault();
+            e.stopPropagation();
+            const menuW = 264;
+            const menuH = 400;
+            setOsnapMenu({
+              x: Math.min(window.innerWidth - menuW - 8, Math.max(8, e.clientX)),
+              y: Math.min(window.innerHeight - menuH - 8, Math.max(8, e.clientY)),
+            });
+          }
+        }}
         style={customCursorStyle}
         className={`block w-full h-full touch-none-canvas ${cursorClass}`}
       />
@@ -2691,6 +2972,208 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
             className="absolute right-3 w-7 h-7 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-md cursor-grab active:cursor-grabbing hover:bg-blue-700"
           >
             <RotateCw className="w-3.5 h-3.5" />
+          </div>
+        </div>
+      )}
+
+      {/* CAD OSNAP Context Menu (Shift + Right-Click) */}
+      {osnapMenu && (
+        <div
+          ref={osnapMenuRef}
+          onContextMenu={(e) => e.preventDefault()}
+          onPointerDown={(e) => e.stopPropagation()}
+          style={{ left: osnapMenu.x, top: osnapMenu.y }}
+          className="fixed z-50 w-66 rounded-2xl bg-white/95 dark:bg-[#1B1F27]/95 backdrop-blur-md border border-slate-200 dark:border-slate-700 shadow-2xl p-2.5 select-none space-y-2"
+        >
+          <div className="flex items-center justify-between px-1">
+            <div className="flex items-center gap-1.5">
+              <Magnet className="w-4 h-4 text-emerald-600" />
+              <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                Bắt điểm CAD (OSNAP)
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() =>
+                onOsnapChange((prev) => ({
+                  ...prev,
+                  enabled: !prev.enabled,
+                  oneShot: null,
+                }))
+              }
+              title="Bật/Tắt nhanh bằng phím F3"
+              className={`px-2 py-0.5 rounded-md text-[10px] font-semibold cursor-pointer ${
+                osnap.enabled
+                  ? 'bg-emerald-600 text-white'
+                  : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
+              }`}
+            >
+              {osnap.enabled ? 'ĐANG BẬT (F3)' : 'ĐÃ TẮT (F3)'}
+            </button>
+          </div>
+
+          <div className="grid grid-cols-3 gap-1 px-0.5">
+            <button
+              type="button"
+              onClick={() =>
+                onOsnapChange({
+                  enabled: true,
+                  oneShot: null,
+                  modes: {
+                    endpoint: true,
+                    midpoint: true,
+                    center: true,
+                    quadrant: true,
+                    intersection: true,
+                    perpendicular: true,
+                    tangent: true,
+                    nearest: false,
+                  },
+                })
+              }
+              className="py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-[10px] font-medium text-slate-700 dark:text-slate-200 cursor-pointer"
+            >
+              Chuẩn CAD
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                onOsnapChange({
+                  enabled: true,
+                  oneShot: null,
+                  modes: {
+                    endpoint: true,
+                    midpoint: true,
+                    center: true,
+                    quadrant: true,
+                    intersection: true,
+                    perpendicular: true,
+                    tangent: true,
+                    nearest: true,
+                  },
+                })
+              }
+              className="py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-[10px] font-medium text-slate-700 dark:text-slate-200 cursor-pointer"
+            >
+              Bật tất cả
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                onOsnapChange((prev) => ({
+                  ...prev,
+                  enabled: false,
+                  oneShot: null,
+                }))
+              }
+              className="py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-[10px] font-medium text-slate-600 dark:text-slate-300 hover:text-rose-600 cursor-pointer"
+            >
+              Tắt hết
+            </button>
+          </div>
+
+          <div className="space-y-0.5 max-h-64 overflow-y-auto">
+            {OSNAP_META.map((item) => {
+              const checked = osnap.enabled && osnap.modes[item.type];
+              const isOneShot = osnap.oneShot === item.type;
+              return (
+                <div
+                  key={item.type}
+                  className={`flex items-center justify-between gap-1 px-2 py-1.5 rounded-lg transition-colors ${
+                    isOneShot
+                      ? 'bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-300 dark:border-emerald-700'
+                      : 'hover:bg-slate-100 dark:hover:bg-slate-800/80'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onOsnapChange((prev) => {
+                        const nextVal = !prev.modes[item.type];
+                        return {
+                          enabled: nextVal ? true : prev.enabled,
+                          oneShot: null,
+                          modes: { ...prev.modes, [item.type]: nextVal },
+                        };
+                      })
+                    }
+                    className="flex-1 flex items-center gap-2 text-left cursor-pointer"
+                  >
+                    <svg viewBox="0 0 16 16" className="w-4 h-4 shrink-0" aria-hidden="true">
+                      {item.type === 'endpoint' && (
+                        <rect x="3" y="3" width="10" height="10" fill="none" stroke={item.color} strokeWidth="1.8" />
+                      )}
+                      {item.type === 'intersection' && (
+                        <path d="M3 3 L13 13 M13 3 L3 13" fill="none" stroke={item.color} strokeWidth="1.8" strokeLinecap="round" />
+                      )}
+                      {item.type === 'midpoint' && (
+                        <polygon points="8,2.5 13.5,13 2.5,13" fill="none" stroke={item.color} strokeWidth="1.8" strokeLinejoin="round" />
+                      )}
+                      {item.type === 'center' && (
+                        <>
+                          <circle cx="8" cy="8" r="5" fill="none" stroke={item.color} strokeWidth="1.6" />
+                          <path d="M1.5 8 H14.5 M8 1.5 V14.5" stroke={item.color} strokeWidth="1.2" />
+                        </>
+                      )}
+                      {item.type === 'quadrant' && (
+                        <polygon points="8,2 14,8 8,14 2,8" fill="none" stroke={item.color} strokeWidth="1.8" strokeLinejoin="round" />
+                      )}
+                      {item.type === 'tangent' && (
+                        <>
+                          <circle cx="8" cy="9" r="4.5" fill="none" stroke={item.color} strokeWidth="1.7" />
+                          <line x1="2.5" y1="3" x2="13.5" y2="3" stroke={item.color} strokeWidth="1.8" strokeLinecap="round" />
+                        </>
+                      )}
+                      {item.type === 'perpendicular' && (
+                        <path d="M2.5 13 H13.5 M8 13 V3 M8 8.5 H12 V13" fill="none" stroke={item.color} strokeWidth="1.7" strokeLinecap="round" />
+                      )}
+                      {item.type === 'nearest' && (
+                        <polygon points="3,3 13,3 3,13 13,13" fill="none" stroke={item.color} strokeWidth="1.6" strokeLinejoin="round" />
+                      )}
+                    </svg>
+                    <span className="text-[11px] font-medium text-slate-800 dark:text-slate-100">
+                      {item.label}
+                    </span>
+                    {checked && (
+                      <Check className="w-3.5 h-3.5 text-emerald-600 ml-auto shrink-0" />
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (item.type === 'tangent') {
+                        onSelectTool('shape');
+                        if (!isLinearShapeType(activeShape)) {
+                          onSelectShape?.('line');
+                        }
+                      }
+                      onOsnapChange((prev) => ({
+                        ...prev,
+                        enabled: true,
+                        oneShot: item.type as SnapType,
+                      }));
+                      setOsnapMenu(null);
+                    }}
+                    title="Chỉ bắt điểm này cho nét vẽ tiếp theo"
+                    className="px-1.5 py-0.5 rounded bg-slate-200/70 dark:bg-slate-700/80 hover:bg-blue-600 hover:text-white text-[9px] font-semibold text-slate-600 dark:text-slate-300 cursor-pointer shrink-0"
+                  >
+                    Chỉ bắt
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="pt-1 border-t border-slate-100 dark:border-slate-800 text-[10px] text-slate-500 px-1 leading-snug space-y-0.5">
+            {(!isLinearShapeType(activeShape) || activeTool !== 'shape') && (
+              <div className="text-amber-600 dark:text-amber-400 font-medium">
+                Lưu ý: Tiếp điểm &amp; Vuông góc chỉ hoạt động khi vẽ Đoạn thẳng / Mũi tên với Đường tròn.
+              </div>
+            )}
+            <div>
+              Giữ <strong>Shift</strong> khi vẽ đoạn thẳng để bắt đủ <strong>8 góc</strong> (0°, 45°, 90°, 135°, 180°, 225°, 270°, 315°).
+            </div>
           </div>
         </div>
       )}

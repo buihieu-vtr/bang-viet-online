@@ -13,6 +13,7 @@ import {
   Highlighter,
   ImagePlus,
   Lasso,
+  Magnet,
   Maximize,
   Minus,
   MousePointer2,
@@ -33,6 +34,7 @@ import {
 } from 'lucide-react';
 import {
   EraserMode,
+  OsnapSettings,
   PenSlot,
   SelectMode,
   ShapeType,
@@ -80,6 +82,8 @@ interface ToolDockProps {
   onAddCustomColor: (hex: string) => void;
   onRemoveCustomColor: (hex: string) => void;
   isCompact?: boolean;
+  osnap?: OsnapSettings;
+  onToggleOsnap?: () => void;
 }
 
 const SHAPE_OPTIONS: { id: ShapeType; label: string; icon: React.ReactNode }[] = [
@@ -135,6 +139,8 @@ export const ToolDock: React.FC<ToolDockProps> = ({
   onAddCustomColor,
   onRemoveCustomColor,
   isCompact: isCompactProp,
+  osnap,
+  onToggleOsnap,
 }) => {
   const [openMenu, setOpenMenu] = useState<'select' | 'highlighter' | 'eraser' | 'shape' | 'insert' | null>(null);
   const [shapeColorTab, setShapeColorTab] = useState<'stroke' | 'fill'>('stroke');
@@ -906,6 +912,27 @@ export const ToolDock: React.FC<ToolDockProps> = ({
             />
             <span className="hidden md:inline">Thêm</span>
           </button>
+
+          {osnap && onToggleOsnap && (
+            <>
+              <div className="w-px h-4 bg-slate-200 dark:bg-slate-700 mx-0.5 shrink-0" />
+              <button
+                type="button"
+                onClick={onToggleOsnap}
+                title="Bắt điểm CAD OSNAP (F3) · Giữ Shift + Chuột phải trên bảng để chọn Tiếp điểm, Trung điểm, Vuông góc..."
+                className={`h-7 px-1.5 rounded-lg flex items-center gap-1 text-[11px] font-medium shrink-0 cursor-pointer transition-colors ${
+                  osnap.enabled || osnap.oneShot
+                    ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 ring-1 ring-emerald-500/40'
+                    : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                <Magnet className="w-3.5 h-3.5" />
+                <span className="hidden lg:inline">
+                  {osnap.oneShot ? '1-lần' : 'Bắt điểm'}
+                </span>
+              </button>
+            </>
+          )}
         </div>
       )}
 

@@ -180,6 +180,37 @@ export interface StylusSettings {
   minMovePx: number; // 0 .. 6 minimum pointer movement in px before starting draw
 }
 
+export type SnapType =
+  | 'endpoint'
+  | 'midpoint'
+  | 'center'
+  | 'quadrant'
+  | 'intersection'
+  | 'perpendicular'
+  | 'tangent'
+  | 'nearest';
+
+export interface OsnapSettings {
+  enabled: boolean;
+  modes: Record<SnapType, boolean>;
+  oneShot: SnapType | null;
+}
+
+export const DEFAULT_OSNAP_SETTINGS: OsnapSettings = {
+  enabled: true,
+  modes: {
+    endpoint: true,
+    midpoint: true,
+    center: true,
+    quadrant: true,
+    intersection: true,
+    perpendicular: true,
+    tangent: true,
+    nearest: false,
+  },
+  oneShot: null,
+};
+
 export interface RulerState {
   visible: boolean;
   x: number;

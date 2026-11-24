@@ -18,10 +18,12 @@ import {
   BoardElement,
   BoardPage,
   DEFAULT_CHALK_SLOTS,
+  DEFAULT_OSNAP_SETTINGS,
   DEFAULT_PEN_SLOTS,
   EraserMode,
   ImageItem,
   NotebookDocument,
+  OsnapSettings,
   PAGE_DIMENSIONS,
   PageSizeMode,
   PaperTemplate,
@@ -144,6 +146,35 @@ export default function App() {
       // Ignore storage error
     }
   }, [stylusSettings]);
+  const [osnap, setOsnap] = useState<OsnapSettings>(() => {
+    try {
+      const raw = localStorage.getItem('inkboard_osnap_settings');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        return {
+          enabled: typeof parsed.enabled === 'boolean' ? parsed.enabled : DEFAULT_OSNAP_SETTINGS.enabled,
+          modes: {
+            ...DEFAULT_OSNAP_SETTINGS.modes,
+            ...(parsed.modes && typeof parsed.modes === 'object' ? parsed.modes : {}),
+          },
+          oneShot: null,
+        };
+      }
+    } catch {
+      // Ignore storage error
+    }
+    return DEFAULT_OSNAP_SETTINGS;
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        'inkboard_osnap_settings',
+        JSON.stringify({ enabled: osnap.enabled, modes: osnap.modes })
+      );
+    } catch {
+      // Ignore storage error
+    }
+  }, [osnap.enabled, osnap.modes]);
   const [darkMode, setDarkMode] = useState<boolean>(false);
   const [tocOpen, setTocOpen] = useState<boolean>(false);
   const [pagesDrawerOpen, setPagesDrawerOpen] = useState<boolean>(false);
@@ -1290,6 +1321,10 @@ export default function App() {
             customColors={customColors}
             onAddCustomColor={handleAddCustomColor}
             onRemoveCustomColor={handleRemoveCustomColor}
+            osnap={osnap}
+            onToggleOsnap={() =>
+              setOsnap((prev) => ({ ...prev, enabled: !prev.enabled, oneShot: null }))
+            }
           />
 
           <WhiteboardCanvas
@@ -1322,10 +1357,13 @@ export default function App() {
             }}
             scrollToPageRequest={scrollToPageRequest}
             onSelectTool={setActiveTool}
+            onSelectShape={setActiveShape}
             customColors={customColors}
             onAddCustomColor={handleAddCustomColor}
             onRemoveCustomColor={handleRemoveCustomColor}
             isCompact={isCompactViewport}
+            osnap={osnap}
+            onOsnapChange={setOsnap}
           />
 
           {/* Quick Multi-Page Switcher (Top-left on compact mobile so it never collides with Bottom ToolDock) */}
