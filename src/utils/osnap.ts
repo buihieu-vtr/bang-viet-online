@@ -6,6 +6,7 @@ import {
   SnapType,
 } from '../types/inkboard';
 import { dist, distToSegment } from './geometry';
+import { getEllipseBasisFromControl, isSpatialShapeType } from './geometry3d';
 
 export interface EllipseSnapInfo {
   cx: number;
@@ -125,6 +126,114 @@ function getShapeSegmentsAndPoints(shape: ShapeItem): {
       segments.push({ a, b, shapeId: shape.id });
     }
   };
+
+  if (isSpatialShapeType(shape.shapeType) && shape.vertices && shape.vertices.length > 0) {
+    const verts = shape.vertices;
+    if (shape.shapeType === 'sphere3d' && verts.length >= 3) {
+      const [center, rim] = verts;
+      const r = Math.max(8, dist(center, rim));
+      centers.push({ x: center.x, y: center.y });
+      quadrants.push(
+        { x: center.x + r, y: center.y },
+        { x: center.x, y: center.y + r },
+        { x: center.x - r, y: center.y },
+        { x: center.x, y: center.y - r }
+      );
+      return {
+        endpoints,
+        midpoints,
+        centers,
+        quadrants,
+        segments,
+        ellipseInfo: { cx: center.x, cy: center.y, rx: r, ry: r, rot: 0 },
+      };
+    }
+
+    if (shape.shapeType === 'cylinder3d' && verts.length >= 4) {
+      const [topC, botC, rim, front] = verts;
+      const { rx, ry, ux, uy, nx, ny } = getEllipseBasisFromControl(botC, rim, front);
+      const tL = { x: topC.x - ux * rx, y: topC.y - uy * rx };
+      const tR = { x: topC.x + ux * rx, y: topC.y + uy * rx };
+      const bL = { x: botC.x - ux * rx, y: botC.y - uy * rx };
+      const bR = { x: botC.x + ux * rx, y: botC.y + uy * rx };
+      centers.push({ x: topC.x, y: topC.y }, { x: botC.x, y: botC.y });
+      endpoints.push(tL, tR, bL, bR);
+      quadrants.push(
+        tL,
+        tR,
+        bL,
+        bR,
+        { x: topC.x + nx * ry, y: topC.y + ny * ry },
+        { x: topC.x - nx * ry, y: topC.y - ny * ry },
+        { x: botC.x + nx * ry, y: botC.y + ny * ry },
+        { x: botC.x - nx * ry, y: botC.y - ny * ry }
+      );
+      segments.push(
+        { a: tL, b: bL, shapeId: shape.id },
+        { a: tR, b: bR, shapeId: shape.id },
+        { a: topC, b: botC, shapeId: shape.id },
+        { a: botC, b: bR, shapeId: shape.id }
+      );
+      return { endpoints, midpoints, centers, quadrants, segments };
+    }
+
+    if (shape.shapeType === 'cone3d' && verts.length >= 4) {
+      const [apex, botC, rim, front] = verts;
+      const { rx, ry, ux, uy, nx, ny } = getEllipseBasisFromControl(botC, rim, front);
+      const bL = { x: botC.x - ux * rx, y: botC.y - uy * rx };
+      const bR = { x: botC.x + ux * rx, y: botC.y + uy * rx };
+      endpoints.push({ x: apex.x, y: apex.y }, bL, bR);
+      centers.push({ x: botC.x, y: botC.y });
+      quadrants.push(
+        bL,
+        bR,
+        { x: botC.x + nx * ry, y: botC.y + ny * ry },
+        { x: botC.x - nx * ry, y: botC.y - ny * ry }
+      );
+      segments.push(
+        { a: apex, b: botC, shapeId: shape.id },
+        { a: botC, b: bR, shapeId: shape.id }
+      );
+      return { endpoints, midpoints, centers, quadrants, segments };
+    }
+
+    const rVerts = verts.map((v) => R(v.x, v.y));
+    endpoints.push(...rVerts);
+    for (const edge of shape.edges || []) {
+      const a = rVerts[edge.a];
+      const b = rVerts[edge.b];
+      if (!a || !b) continue;
+      midpoints.push({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+      segments.push({ a, b, shapeId: shape.id });
+    }
+    if (shape.shapeType === 'pyramidSquare' && rVerts.length >= 5) {
+      const [, A, B, C, D] = rVerts;
+      const baseO = {
+        x: (A.x + B.x + C.x + D.x) / 4,
+        y: (A.y + B.y + C.y + D.y) / 4,
+      };
+      centers.push(baseO);
+      endpoints.push(baseO);
+      segments.push({ a: rVerts[0], b: baseO, shapeId: shape.id });
+    } else if (shape.shapeType === 'pyramidPerpFace' && rVerts.length >= 3) {
+      const [S, A, B] = rVerts;
+      const dx = B.x - A.x;
+      const dy = B.y - A.y;
+      const len2 = dx * dx + dy * dy;
+      if (len2 > 1e-4) {
+        const t = ((S.x - A.x) * dx + (S.y - A.y) * dy) / len2;
+        const H = { x: A.x + t * dx, y: A.y + t * dy };
+        endpoints.push(H);
+        segments.push({ a: S, b: H, shapeId: shape.id });
+      }
+    } else if (rVerts.length > 0) {
+      centers.push({
+        x: rVerts.reduce((s, v) => s + v.x, 0) / rVerts.length,
+        y: rVerts.reduce((s, v) => s + v.y, 0) / rVerts.length,
+      });
+    }
+    return { endpoints, midpoints, centers, quadrants, segments };
+  }
 
   switch (shape.shapeType) {
     case 'line':
@@ -776,3 +885,621 @@ export function renderAngleHud(
   ctx.fillText(label, mx + padX, my + padY);
   ctx.restore();
 }
+
+export interface MagneticGuide {
+  kind: 'parallel' | 'perpendicular' | 'ortho';
+  label: string;
+  color: string;
+  point: { x: number; y: number };
+  rays: { from: { x: number; y: number }; to: { x: number; y: number } }[];
+  refs?: { a: { x: number; y: number }; b: { x: number; y: number } }[];
+  perpCorner?: {
+    corner: { x: number; y: number };
+    legA: { x: number; y: number };
+    legB: { x: number; y: number };
+  };
+}
+
+function angleDiffAbs(a: number, b: number): number {
+  const d = ((((a - b) % (Math.PI * 2)) + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+  return Math.abs(d);
+}
+
+function rayIntersection(
+  p1: { x: number; y: number },
+  ang1: number,
+  p2: { x: number; y: number },
+  ang2: number
+): { x: number; y: number } | null {
+  const rX = Math.cos(ang1);
+  const rY = Math.sin(ang1);
+  const sX = Math.cos(ang2);
+  const sY = Math.sin(ang2);
+  const denom = rX * sY - rY * sX;
+  if (Math.abs(denom) < 0.08) return null;
+  const t = ((p2.x - p1.x) * sY - (p2.y - p1.y) * sX) / denom;
+  return { x: p1.x + t * rX, y: p1.y + t * rY };
+}
+
+function lineLineIntersection(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  c: { x: number; y: number },
+  d: { x: number; y: number }
+): { x: number; y: number } | null {
+  const rX = b.x - a.x;
+  const rY = b.y - a.y;
+  const sX = d.x - c.x;
+  const sY = d.y - c.y;
+  const denom = rX * sY - rY * sX;
+  if (Math.abs(denom) < 1e-4) return null;
+  const t = ((c.x - a.x) * sY - (c.y - a.y) * sX) / denom;
+  return { x: a.x + t * rX, y: a.y + t * rY };
+}
+
+function collectElementSegments(elements: BoardElement[]): { a: { x: number; y: number }; b: { x: number; y: number } }[] {
+  const out: { a: { x: number; y: number }; b: { x: number; y: number } }[] = [];
+  for (const el of elements) {
+    if (el.type === 'shape') {
+      const geo = getShapeSegmentsAndPoints(el);
+      for (const s of geo.segments) {
+        if (dist(s.a, s.b) >= 12) {
+          out.push({ a: s.a, b: s.b });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Light magnetic snap for line / arrow drawing toward parallel (//), perpendicular (⊥), or horizontal/vertical.
+ */
+export function findMagneticLineSnap(
+  elements: BoardElement[],
+  startPt: { x: number; y: number },
+  cursorPt: { x: number; y: number },
+  zoom: number
+): { point: { x: number; y: number }; guide: MagneticGuide } | null {
+  const dx = cursorPt.x - startPt.x;
+  const dy = cursorPt.y - startPt.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 16 / zoom) return null;
+
+  const rawAng = Math.atan2(dy, dx);
+  const orthoTol = (2.6 * Math.PI) / 180;
+  const segTol = (3.4 * Math.PI) / 180;
+
+  interface Candidate {
+    angle: number;
+    err: number;
+    score: number;
+    kind: 'parallel' | 'perpendicular' | 'ortho';
+    label: string;
+    color: string;
+    refSeg?: { a: { x: number; y: number }; b: { x: number; y: number } };
+  }
+
+  const candidates: Candidate[] = [];
+
+  // 1. Horizontal & Vertical (0°, 90°, 180°, -90°)
+  for (const ang of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+    const err = angleDiffAbs(rawAng, ang);
+    if (err <= orthoTol) {
+      const isHoriz = ang === 0 || ang === Math.PI;
+      candidates.push({
+        angle: ang,
+        err,
+        score: err + 0.004, // let touching segment perp/parallel take priority if matched
+        kind: 'ortho',
+        label: isHoriz ? 'Nằm ngang' : 'Thẳng đứng',
+        color: '#2563EB',
+      });
+    }
+  }
+
+  // 2. Existing shape segments (Parallel // & Perpendicular ⊥)
+  const segs = collectElementSegments(elements);
+  const touchDist = 8 / zoom;
+
+  for (const seg of segs) {
+    const segAng = Math.atan2(seg.b.y - seg.a.y, seg.b.x - seg.a.x);
+    const touchesStart = distToSegment(startPt, seg.a, seg.b).distance <= touchDist;
+    const isAxisAligned =
+      angleDiffAbs(segAng, 0) < 0.015 ||
+      angleDiffAbs(segAng, Math.PI) < 0.015 ||
+      angleDiffAbs(segAng, Math.PI / 2) < 0.015 ||
+      angleDiffAbs(segAng, -Math.PI / 2) < 0.015;
+
+    // Parallel (//)
+    for (const pAng of [segAng, segAng + Math.PI]) {
+      const err = angleDiffAbs(rawAng, pAng);
+      if (err <= segTol) {
+        if (isAxisAligned && !touchesStart) continue;
+        candidates.push({
+          angle: pAng,
+          err,
+          score: err - (touchesStart ? 0.015 : 0),
+          kind: 'parallel',
+          label: 'Song song //',
+          color: '#0EA5E9',
+          refSeg: seg,
+        });
+      }
+    }
+
+    // Perpendicular (⊥)
+    for (const perpAng of [segAng + Math.PI / 2, segAng - Math.PI / 2]) {
+      const err = angleDiffAbs(rawAng, perpAng);
+      if (err <= segTol) {
+        if (isAxisAligned && !touchesStart) continue;
+        candidates.push({
+          angle: perpAng,
+          err,
+          score: err - (touchesStart ? 0.018 : 0),
+          kind: 'perpendicular',
+          label: 'Vuông góc ⊥',
+          color: '#8B5CF6',
+          refSeg: seg,
+        });
+      }
+    }
+  }
+
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => a.score - b.score);
+  const best = candidates[0];
+
+  const snappedEnd = {
+    x: startPt.x + Math.cos(best.angle) * len,
+    y: startPt.y + Math.sin(best.angle) * len,
+  };
+
+  let perpCorner: MagneticGuide['perpCorner'];
+  if (best.kind === 'perpendicular' && best.refSeg) {
+    const inter = lineLineIntersection(startPt, snappedEnd, best.refSeg.a, best.refSeg.b);
+    if (inter) {
+      const dA = dist(inter, best.refSeg.a);
+      const dB = dist(inter, best.refSeg.b);
+      const legRef = dA >= dB ? best.refSeg.a : best.refSeg.b;
+      const legLine = dist(inter, startPt) >= dist(inter, snappedEnd) ? startPt : snappedEnd;
+      if (dist(inter, legLine) > 4 / zoom && dist(inter, legRef) > 4 / zoom) {
+        perpCorner = { corner: inter, legA: legLine, legB: legRef };
+      }
+    }
+  }
+
+  return {
+    point: snappedEnd,
+    guide: {
+      kind: best.kind,
+      label: best.label,
+      color: best.color,
+      point: snappedEnd,
+      rays: [{ from: startPt, to: snappedEnd }],
+      refs: best.refSeg ? [best.refSeg] : undefined,
+      perpCorner,
+    },
+  };
+}
+
+/**
+ * Light magnetic snap when dragging a vertex of a 3D / spatial shape toward parallel (//),
+ * perpendicular (⊥), or vertical/horizontal alignment.
+ */
+export function findMagneticVertexSnap(
+  shape: ShapeItem,
+  vertexIdx: number,
+  otherElements: BoardElement[],
+  cursorPt: { x: number; y: number },
+  zoom: number
+): { point: { x: number; y: number }; guide: MagneticGuide } | null {
+  const verts = shape.vertices;
+  if (!verts || vertexIdx < 0 || vertexIdx >= verts.length) return null;
+
+  // 1. Special curved/pyramid vertical & horizontal alignment helpers
+  if (shape.shapeType === 'pyramidSquare' && vertexIdx === 0 && verts.length >= 5) {
+    const [, A, B, C, D] = verts;
+    const baseO = {
+      x: (A.x + B.x + C.x + D.x) / 4,
+      y: (A.y + B.y + C.y + D.y) / 4,
+    };
+    if (Math.abs(cursorPt.x - baseO.x) <= 7 / zoom) {
+      const snapped = { x: baseO.x, y: cursorPt.y };
+      return {
+        point: snapped,
+        guide: {
+          kind: 'perpendicular',
+          label: 'SO ⊥ đáy',
+          color: '#8B5CF6',
+          point: snapped,
+          rays: [{ from: baseO, to: snapped }],
+          perpCorner: { corner: baseO, legA: snapped, legB: C },
+        },
+      };
+    }
+  }
+
+  if ((shape.shapeType === 'cylinder3d' || shape.shapeType === 'cone3d') && verts.length >= 4) {
+    const baseO = verts[1];
+    if (vertexIdx === 0 && Math.abs(cursorPt.x - baseO.x) <= 7 / zoom) {
+      const snapped = { x: baseO.x, y: cursorPt.y };
+      return {
+        point: snapped,
+        guide: {
+          kind: 'perpendicular',
+          label: 'Trục ⊥ đáy',
+          color: '#8B5CF6',
+          point: snapped,
+          rays: [{ from: baseO, to: snapped }],
+          perpCorner: { corner: baseO, legA: snapped, legB: verts[2] },
+        },
+      };
+    }
+    if (vertexIdx === 2 && Math.abs(cursorPt.y - baseO.y) <= 6 / zoom) {
+      const snapped = { x: cursorPt.x, y: baseO.y };
+      return {
+        point: snapped,
+        guide: {
+          kind: 'ortho',
+          label: 'Nằm ngang',
+          color: '#2563EB',
+          point: snapped,
+          rays: [{ from: baseO, to: snapped }],
+        },
+      };
+    }
+  }
+
+  // 2. Polyhedron / Polygon edge constraints
+  const edges = shape.edges || [];
+  if (edges.length === 0) return null;
+
+  const neighborIdxs: number[] = [];
+  const sameShapeOtherEdges: { a: { x: number; y: number }; b: { x: number; y: number } }[] = [];
+  const edgesByVertex = new Map<number, { a: { x: number; y: number }; b: { x: number; y: number } }[]>();
+
+  for (const e of edges) {
+    const va = verts[e.a];
+    const vb = verts[e.b];
+    if (!va || !vb) continue;
+    if (e.a === vertexIdx) {
+      neighborIdxs.push(e.b);
+    } else if (e.b === vertexIdx) {
+      neighborIdxs.push(e.a);
+    } else {
+      if (dist(va, vb) >= 8) {
+        sameShapeOtherEdges.push({ a: va, b: vb });
+      }
+      if (!edgesByVertex.has(e.a)) edgesByVertex.set(e.a, []);
+      if (!edgesByVertex.has(e.b)) edgesByVertex.set(e.b, []);
+      edgesByVertex.get(e.a)!.push({ a: va, b: vb });
+      edgesByVertex.get(e.b)!.push({ a: vb, b: va });
+    }
+  }
+
+  if (neighborIdxs.length === 0) return null;
+
+  const sceneSegments = collectElementSegments(otherElements);
+  const orthoTol = (2.6 * Math.PI) / 180;
+  const sameShapeTol = (3.8 * Math.PI) / 180;
+  const sceneTol = (2.8 * Math.PI) / 180;
+
+  interface RayCandidate {
+    nbIdx: number;
+    anchor: { x: number; y: number };
+    angle: number;
+    err: number;
+    score: number;
+    kind: 'parallel' | 'perpendicular' | 'ortho';
+    label: string;
+    color: string;
+    refSeg?: { a: { x: number; y: number }; b: { x: number; y: number } };
+  }
+
+  const bestPerNeighbor = new Map<number, RayCandidate>();
+
+  for (const nbIdx of neighborIdxs) {
+    const anchor = verts[nbIdx];
+    const dx = cursorPt.x - anchor.x;
+    const dy = cursorPt.y - anchor.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 14 / zoom) continue;
+    const rawAng = Math.atan2(dy, dx);
+
+    const candidates: RayCandidate[] = [];
+
+    // Same-shape edges (Parallel // & Perpendicular ⊥)
+    for (const seg of sameShapeOtherEdges) {
+      const segAng = Math.atan2(seg.b.y - seg.a.y, seg.b.x - seg.a.x);
+      const isConnectedToAnchor =
+        dist(seg.a, anchor) < 1 || dist(seg.b, anchor) < 1;
+
+      if (!isConnectedToAnchor) {
+        for (const pAng of [segAng, segAng + Math.PI]) {
+          const err = angleDiffAbs(rawAng, pAng);
+          if (err <= sameShapeTol) {
+            candidates.push({
+              nbIdx,
+              anchor,
+              angle: pAng,
+              err,
+              score: err - 0.015, // prioritize same-shape parallel
+              kind: 'parallel',
+              label: 'Song song //',
+              color: '#0EA5E9',
+              refSeg: seg,
+            });
+          }
+        }
+      }
+
+      for (const perpAng of [segAng + Math.PI / 2, segAng - Math.PI / 2]) {
+        const err = angleDiffAbs(rawAng, perpAng);
+        if (err <= sameShapeTol) {
+          candidates.push({
+            nbIdx,
+            anchor,
+            angle: perpAng,
+            err,
+            score: err - (isConnectedToAnchor ? 0.018 : 0.008),
+            kind: 'perpendicular',
+            label: 'Vuông góc ⊥',
+            color: '#8B5CF6',
+            refSeg: seg,
+          });
+        }
+      }
+    }
+
+    // Horizontal / Vertical relative to neighbor
+    for (const ang of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+      const err = angleDiffAbs(rawAng, ang);
+      if (err <= orthoTol) {
+        const isHoriz = ang === 0 || ang === Math.PI;
+        candidates.push({
+          nbIdx,
+          anchor,
+          angle: ang,
+          err,
+          score: err,
+          kind: 'ortho',
+          label: isHoriz ? 'Nằm ngang' : 'Thẳng đứng',
+          color: '#2563EB',
+        });
+      }
+    }
+
+    // Scene segments from other elements
+    for (const seg of sceneSegments) {
+      const segAng = Math.atan2(seg.b.y - seg.a.y, seg.b.x - seg.a.x);
+      const isAxisAligned =
+        angleDiffAbs(segAng, 0) < 0.015 ||
+        angleDiffAbs(segAng, Math.PI) < 0.015 ||
+        angleDiffAbs(segAng, Math.PI / 2) < 0.015 ||
+        angleDiffAbs(segAng, -Math.PI / 2) < 0.015;
+      if (isAxisAligned) continue;
+
+      for (const pAng of [segAng, segAng + Math.PI]) {
+        const err = angleDiffAbs(rawAng, pAng);
+        if (err <= sceneTol) {
+          candidates.push({
+            nbIdx,
+            anchor,
+            angle: pAng,
+            err,
+            score: err + 0.006,
+            kind: 'parallel',
+            label: 'Song song //',
+            color: '#0EA5E9',
+            refSeg: seg,
+          });
+        }
+      }
+      for (const perpAng of [segAng + Math.PI / 2, segAng - Math.PI / 2]) {
+        const err = angleDiffAbs(rawAng, perpAng);
+        if (err <= sceneTol) {
+          candidates.push({
+            nbIdx,
+            anchor,
+            angle: perpAng,
+            err,
+            score: err + 0.006,
+            kind: 'perpendicular',
+            label: 'Vuông góc ⊥',
+            color: '#8B5CF6',
+            refSeg: seg,
+          });
+        }
+      }
+    }
+
+    if (candidates.length > 0) {
+      candidates.sort((a, b) => a.score - b.score);
+      bestPerNeighbor.set(nbIdx, candidates[0]);
+    }
+  }
+
+  const allWinners = Array.from(bestPerNeighbor.values()).sort((a, b) => a.score - b.score);
+  if (allWinners.length === 0) return null;
+
+  // Check if TWO distinct neighbors simultaneously snapped cleanly -> exact intersection!
+  if (allWinners.length >= 2) {
+    const r1 = allWinners[0];
+    for (let i = 1; i < allWinners.length; i++) {
+      const r2 = allWinners[i];
+      const inter = rayIntersection(r1.anchor, r1.angle, r2.anchor, r2.angle);
+      if (inter && dist(cursorPt, inter) <= 18 / zoom) {
+        const refs: { a: { x: number; y: number }; b: { x: number; y: number } }[] = [];
+        if (r1.refSeg) refs.push(r1.refSeg);
+        if (r2.refSeg) refs.push(r2.refSeg);
+        const label =
+          r1.kind === 'parallel' && r2.kind === 'parallel'
+            ? 'Song song //'
+            : r1.kind === 'perpendicular' || r2.kind === 'perpendicular'
+              ? 'Vuông góc ⊥'
+              : r1.label;
+        return {
+          point: inter,
+          guide: {
+            kind: r1.kind,
+            label,
+            color: r1.color,
+            point: inter,
+            rays: [
+              { from: r1.anchor, to: inter },
+              { from: r2.anchor, to: inter },
+            ],
+            refs: refs.length > 0 ? refs : undefined,
+          },
+        };
+      }
+    }
+  }
+
+  // Single ray projection
+  const best = allWinners[0];
+  const ux = Math.cos(best.angle);
+  const uy = Math.sin(best.angle);
+  const projLen = (cursorPt.x - best.anchor.x) * ux + (cursorPt.y - best.anchor.y) * uy;
+  const snappedPt = {
+    x: best.anchor.x + ux * projLen,
+    y: best.anchor.y + uy * projLen,
+  };
+
+  let perpCorner: MagneticGuide['perpCorner'];
+  if (best.kind === 'perpendicular' && best.refSeg) {
+    const inter = lineLineIntersection(best.anchor, snappedPt, best.refSeg.a, best.refSeg.b);
+    if (inter) {
+      const legRef = dist(inter, best.refSeg.a) >= dist(inter, best.refSeg.b) ? best.refSeg.a : best.refSeg.b;
+      const legLine = dist(inter, best.anchor) >= dist(inter, snappedPt) ? best.anchor : snappedPt;
+      if (dist(inter, legLine) > 4 / zoom && dist(inter, legRef) > 4 / zoom) {
+        perpCorner = { corner: inter, legA: legLine, legB: legRef };
+      }
+    }
+  }
+
+  return {
+    point: snappedPt,
+    guide: {
+      kind: best.kind,
+      label: best.label,
+      color: best.color,
+      point: snappedPt,
+      rays: [{ from: best.anchor, to: snappedPt }],
+      refs: best.refSeg ? [best.refSeg] : undefined,
+      perpCorner,
+    },
+  };
+}
+
+export function renderMagneticGuide(
+  ctx: CanvasRenderingContext2D,
+  guide: MagneticGuide,
+  zoom: number
+) {
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  // Highlight reference segments faintly so user knows which edge is matched
+  if (guide.refs && guide.refs.length > 0) {
+    ctx.strokeStyle = guide.color;
+    ctx.globalAlpha = 0.45;
+    ctx.lineWidth = 3.5 / zoom;
+    for (const r of guide.refs) {
+      ctx.beginPath();
+      ctx.moveTo(r.a.x, r.a.y);
+      ctx.lineTo(r.b.x, r.b.y);
+      ctx.stroke();
+
+      // Parallel tick mark in middle of ref segment
+      if (guide.kind === 'parallel') {
+        const mx = (r.a.x + r.b.x) / 2;
+        const my = (r.a.y + r.b.y) / 2;
+        const ang = Math.atan2(r.b.y - r.a.y, r.b.x - r.a.x);
+        const nx = -Math.sin(ang) * (5 / zoom);
+        const ny = Math.cos(ang) * (5 / zoom);
+        const ux = Math.cos(ang) * (3 / zoom);
+        const uy = Math.sin(ang) * (3 / zoom);
+        ctx.save();
+        ctx.globalAlpha = 0.9;
+        ctx.lineWidth = 1.6 / zoom;
+        ctx.beginPath();
+        ctx.moveTo(mx - ux - nx, my - uy - ny);
+        ctx.lineTo(mx + ux + nx, my + uy + ny);
+        ctx.moveTo(mx + ux - nx, my + uy - ny);
+        ctx.lineTo(mx + ux * 3 + nx, my + uy * 3 + ny);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+  }
+
+  // Draw dashed ray(s)
+  ctx.globalAlpha = 0.85;
+  ctx.strokeStyle = guide.color;
+  ctx.lineWidth = 1.4 / zoom;
+  ctx.setLineDash([5 / zoom, 4 / zoom]);
+  for (const ray of guide.rays) {
+    ctx.beginPath();
+    ctx.moveTo(ray.from.x, ray.from.y);
+    ctx.lineTo(ray.to.x, ray.to.y);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  // Perpendicular right-angle symbol
+  if (guide.perpCorner) {
+    const { corner, legA, legB } = guide.perpCorner;
+    const da = dist(corner, legA);
+    const db = dist(corner, legB);
+    if (da > 4 / zoom && db > 4 / zoom) {
+      const sz = Math.min(10 / zoom, da * 0.45, db * 0.45);
+      const uax = ((legA.x - corner.x) / da) * sz;
+      const uay = ((legA.y - corner.y) / da) * sz;
+      const ubx = ((legB.x - corner.x) / db) * sz;
+      const uby = ((legB.y - corner.y) / db) * sz;
+      ctx.globalAlpha = 0.92;
+      ctx.lineWidth = 1.5 / zoom;
+      ctx.beginPath();
+      ctx.moveTo(corner.x + uax, corner.y + uay);
+      ctx.lineTo(corner.x + uax + ubx, corner.y + uay + uby);
+      ctx.lineTo(corner.x + ubx, corner.y + uby);
+      ctx.stroke();
+    }
+  }
+
+  // Small magnetic snap ring on active point
+  ctx.globalAlpha = 0.95;
+  ctx.fillStyle = '#FFFFFF';
+  ctx.strokeStyle = guide.color;
+  ctx.lineWidth = 2 / zoom;
+  ctx.beginPath();
+  ctx.arc(guide.point.x, guide.point.y, 4.2 / zoom, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // Compact floating label
+  const fontSize = 10 / zoom;
+  ctx.font = `600 ${fontSize}px "DM Sans", sans-serif`;
+  const textW = ctx.measureText(guide.label).width;
+  const padX = 5 / zoom;
+  const padY = 2.2 / zoom;
+  const bx = guide.point.x + 10 / zoom;
+  const by = guide.point.y - 10 / zoom - fontSize - padY * 2;
+
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+  ctx.beginPath();
+  ctx.roundRect(bx, by, textW + padX * 2, fontSize + padY * 2, 4 / zoom);
+  ctx.fill();
+  ctx.strokeStyle = guide.color;
+  ctx.lineWidth = 1 / zoom;
+  ctx.stroke();
+
+  ctx.fillStyle = '#FFFFFF';
+  ctx.textBaseline = 'top';
+  ctx.fillText(guide.label, bx + padX, by + padY);
+  ctx.restore();
+}
+
