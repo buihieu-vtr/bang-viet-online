@@ -12,6 +12,7 @@ import {
   getTemplateColors,
   renderElement,
 } from './renderer';
+import { isSpatialShapeType, renderSpatialShapeToSvg } from './geometry3d';
 
 const DB_NAME = 'InkBoardStudioDB';
 const DB_VERSION = 1;
@@ -490,7 +491,9 @@ export function exportPageToSVG(page: BoardPage, filename: string) {
         ? `transform="rotate(${el.rotation} ${x + w / 2} ${y + h / 2})"`
         : '';
 
-      if (el.shapeType === 'line' || el.shapeType === 'arrow' || el.shapeType === 'doubleArrow') {
+      if (isSpatialShapeType(el.shapeType) && el.vertices && el.vertices.length > 0) {
+        parts.push(renderSpatialShapeToSvg(el));
+      } else if (el.shapeType === 'line' || el.shapeType === 'arrow' || el.shapeType === 'doubleArrow') {
         parts.push(
           `<line x1="${el.x}" y1="${el.y}" x2="${el.x + el.width}" y2="${el.y + el.height}" stroke="${el.strokeColor}" stroke-width="${el.strokeWidth}" stroke-linecap="round" ${dashAttr} />`
         );

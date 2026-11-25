@@ -12,6 +12,7 @@ import {
   TextItem,
   ViewportState,
 } from '../types/inkboard';
+import { isSpatialShapeType, renderSpatialShape } from './geometry3d';
 
 export interface LaserPoint {
   x: number;
@@ -644,6 +645,12 @@ export function renderShape(ctx: CanvasRenderingContext2D, shape: ShapeItem) {
     ctx.translate(cx, cy);
     ctx.rotate((shape.rotation * Math.PI) / 180);
     ctx.translate(-cx, -cy);
+  }
+
+  if (isSpatialShapeType(shape.shapeType) && shape.vertices && shape.vertices.length > 0) {
+    renderSpatialShape(ctx, shape);
+    ctx.restore();
+    return;
   }
 
   ctx.strokeStyle = shape.strokeColor;

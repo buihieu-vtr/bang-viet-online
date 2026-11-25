@@ -6,6 +6,7 @@ import {
   ShapeItem,
   StrokeItem,
 } from '../types/inkboard';
+import { computeShapeBBoxFromVertices, hitTestSpatialShape } from './geometry3d';
 
 export function uid(prefix = 'el'): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -60,6 +61,10 @@ export function getElementBBox(el: BoardElement): BBox {
       width: Math.max(4, maxX - minX + pad * 2),
       height: Math.max(4, maxY - minY + pad * 2),
     };
+  }
+
+  if (el.type === 'shape' && el.vertices && el.vertices.length > 0) {
+    return computeShapeBBoxFromVertices(el);
   }
 
   // Rect-based item (may be negative width/height during creation, normalize)
@@ -149,6 +154,10 @@ export function hitTestElement(
   const lx = dx * Math.cos(rot) - dy * Math.sin(rot) + cx;
   const ly = dx * Math.sin(rot) + dy * Math.cos(rot) + cy;
 
+  if (el.type === 'shape' && el.vertices && el.vertices.length > 0) {
+    return hitTestSpatialShape(el, pt, tolerance);
+  }
+
   if (el.type === 'shape' && (el.shapeType === 'line' || el.shapeType === 'arrow' || el.shapeType === 'doubleArrow')) {
     const p1 = { x: el.x, y: el.y };
     const p2 = { x: el.x + el.width, y: el.y + el.height };
@@ -168,6 +177,14 @@ export function translateElement(el: BoardElement, dx: number, dy: number): Boar
     return {
       ...el,
       points: el.points.map((p) => ({ ...p, x: p.x + dx, y: p.y + dy })),
+    };
+  }
+  if (el.type === 'shape' && el.vertices && el.vertices.length > 0) {
+    return {
+      ...el,
+      x: el.x + dx,
+      y: el.y + dy,
+      vertices: el.vertices.map((v) => ({ ...v, x: v.x + dx, y: v.y + dy })),
     };
   }
   return {
@@ -194,6 +211,17 @@ export function scaleElementInBox(
         y: newBox.y + (p.y - oldBox.y) * sy,
       })),
     };
+  }
+
+  if (el.type === 'shape' && el.vertices && el.vertices.length > 0) {
+    const scaledVerts = el.vertices.map((v) => ({
+      ...v,
+      x: newBox.x + (v.x - oldBox.x) * sx,
+      y: newBox.y + (v.y - oldBox.y) * sy,
+    }));
+    const nextShape: ShapeItem = { ...el, vertices: scaledVerts };
+    const b = computeShapeBBoxFromVertices(nextShape);
+    return { ...nextShape, x: b.x, y: b.y, width: b.width, height: b.height };
   }
 
   return {
@@ -227,6 +255,21 @@ export function rotateElementAround(
         };
       }),
     };
+  }
+
+  if (el.type === 'shape' && el.vertices && el.vertices.length > 0) {
+    const rotVerts = el.vertices.map((v) => {
+      const dx = v.x - center.x;
+      const dy = v.y - center.y;
+      return {
+        ...v,
+        x: center.x + dx * cos - dy * sin,
+        y: center.y + dx * sin + dy * cos,
+      };
+    });
+    const nextShape: ShapeItem = { ...el, vertices: rotVerts, rotation: 0 };
+    const b = computeShapeBBoxFromVertices(nextShape);
+    return { ...nextShape, x: b.x, y: b.y, width: b.width, height: b.height };
   }
 
   const elCx = el.x + el.width / 2;

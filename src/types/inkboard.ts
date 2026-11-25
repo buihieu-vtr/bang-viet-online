@@ -29,7 +29,55 @@ export type ShapeType =
   | 'diamond'
   | 'star'
   | 'axes'
-  | 'table';
+  | 'table'
+  | 'parallelogram'
+  | 'plane'
+  | 'crossSection'
+  | 'tetrahedron'
+  | 'pyramidSquare'
+  | 'pyramidConvex'
+  | 'pyramidPerpEdge'
+  | 'pyramidPerpFace'
+  | 'prismTriRight'
+  | 'prismOblique'
+  | 'cuboid3d'
+  | 'cylinder3d'
+  | 'cone3d'
+  | 'sphere3d';
+
+export interface ShapeVertex {
+  x: number;
+  y: number;
+  label?: string;
+}
+
+export interface ShapeEdge {
+  a: number;
+  b: number;
+  hidden?: boolean;
+}
+
+export type SpatialShapeKind =
+  | 'parallelogram'
+  | 'plane'
+  | 'crossSection'
+  | 'tetrahedron'
+  | 'pyramidSquare'
+  | 'pyramidConvex'
+  | 'pyramidPerpEdge'
+  | 'pyramidPerpFace'
+  | 'prismTriRight'
+  | 'prismOblique'
+  | 'cuboid3d'
+  | 'cylinder3d'
+  | 'cone3d'
+  | 'sphere3d';
+
+export interface SpatialShapeMeta {
+  kind: SpatialShapeKind;
+  showLabels?: boolean;
+  planeLabel?: string;
+}
 
 export type PaperTemplate =
   | 'blank'
@@ -81,6 +129,10 @@ export interface ShapeItem {
   lineStyle?: StrokeStyle;
   rows?: number;
   cols?: number;
+  vertices?: ShapeVertex[];
+  edges?: ShapeEdge[];
+  faces?: number[][];
+  spatialMeta?: SpatialShapeMeta;
 }
 
 export interface TextItem {
