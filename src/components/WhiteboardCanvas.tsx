@@ -51,11 +51,23 @@ import {
   uid,
 } from '../utils/geometry';
 import {
+  addVertexToPolygonShape,
+  initSpatialShapeData,
+  isSpatialShapeType,
+  moveSpatialVertex,
+  removeVertexFromPolygonShape,
+  withRecomputedSpatialBBox,
+} from '../utils/geometry3d';
+import {
   EllipseSnapInfo,
   findBestOsnap,
+  findMagneticLineSnap,
+  findMagneticVertexSnap,
   isLinearShapeType,
+  MagneticGuide,
   OSNAP_META,
   renderAngleHud,
+  renderMagneticGuide,
   renderOsnapMarker,
   resolveDeferredTangentStart,
   SnapCandidate,
@@ -204,6 +216,16 @@ type InteractionMode =
       startAngle: number;
       lastDelta: number;
       snapshot: BoardElement[];
+    }
+  | {
+      type: 'dragVertex';
+      pageId: string;
+      offsetX: number;
+      offsetY: number;
+      shapeId: string;
+      vertexIdx: number;
+      origVertex: { x: number; y: number };
+      snapshot: BoardElement[];
     };
 
 export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
@@ -254,6 +276,12 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
     offsetX: number;
     offsetY: number;
     snap: SnapCandidate;
+  } | null>(null);
+  const magneticGuideRef = useRef<{
+    pageId: string;
+    offsetX: number;
+    offsetY: number;
+    guide: MagneticGuide;
   } | null>(null);
   const shiftAngleLineRef = useRef<boolean>(false);
   const lassoPointsRef = useRef<{ offsetX: number; offsetY: number; points: { x: number; y: number }[] } | null>(null);
@@ -705,6 +733,7 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
     const liveDraw = liveDrawStrokeRef.current;
     const liveSh = liveShapeRef.current;
     const osnapHit = osnapCandidateRef.current;
+    const magGuide = magneticGuideRef.current;
     const lasso = lassoPointsRef.current;
     const boxRect = boxSelectRectRef.current;
     const curWorld = cursorWorldRef.current;
@@ -713,7 +742,7 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
       (activeTool === 'pen' || activeTool === 'pencil' || activeTool === 'highlighter');
     const hasLaser = laserPointsRef.current.length > 0;
 
-    if (!liveDraw && !liveSh && !osnapHit && !lasso && !boxRect && !(activeTool === 'eraser' && curWorld) && !(isPenHover && curWorld) && !hasLaser) {
+    if (!liveDraw && !liveSh && !osnapHit && !magGuide && !lasso && !boxRect && !(activeTool === 'eraser' && curWorld) && !(isPenHover && curWorld) && !hasLaser) {
       return;
     }
 
@@ -784,6 +813,13 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
           );
         }
       }
+    }
+
+    if (magGuide) {
+      ctx.save();
+      ctx.translate(magGuide.offsetX, magGuide.offsetY);
+      renderMagneticGuide(ctx, magGuide.guide, viewport.zoom);
+      ctx.restore();
     }
 
     if (osnapHit) {
@@ -1182,6 +1218,9 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
         dashed: shapeLineStyle !== 'solid',
         rows: 3,
         cols: 3,
+        ...(isSpatialShapeType(activeShape)
+          ? initSpatialShapeData(activeShape, sx, sy, 1, 1)
+          : {}),
       };
       interactionRef.current = {
         type: 'shape',
@@ -1525,6 +1564,9 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
           dashed: shapeLineStyle !== 'solid',
           rows: 3,
           cols: 3,
+          ...(isSpatialShapeType(activeShape)
+            ? initSpatialShapeData(activeShape, sx, sy, 1, 1)
+            : {}),
         };
         interactionRef.current = {
           type: 'shape',
@@ -1784,9 +1826,11 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
           };
         }
         shiftAngleLineRef.current = false;
+        magneticGuideRef.current = null;
       } else {
         osnapCandidateRef.current = null;
         if (e.shiftKey) {
+          magneticGuideRef.current = null;
           if (isLinear) {
             const rawW = localPt.x - baseStartX;
             const rawH = localPt.y - baseStartY;
@@ -1814,6 +1858,27 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
           }
         } else {
           shiftAngleLineRef.current = false;
+          if (isLinear) {
+            const mag = findMagneticLineSnap(
+              targetPage.elements,
+              { x: baseStartX, y: baseStartY },
+              localPt,
+              viewport.zoom
+            );
+            if (mag) {
+              endPt = mag.point;
+              magneticGuideRef.current = {
+                pageId: mode.pageId,
+                offsetX: mode.offsetX,
+                offsetY: mode.offsetY,
+                guide: mag.guide,
+              };
+            } else {
+              magneticGuideRef.current = null;
+            }
+          } else {
+            magneticGuideRef.current = null;
+          }
         }
 
         if (isLinear && mode.deferredEllipse && mode.deferredAnchor) {
@@ -1831,12 +1896,18 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
 
       mode.startX = activeStartX;
       mode.startY = activeStartY;
+      const nextW = endPt.x - activeStartX;
+      const nextH = endPt.y - activeStartY;
+      const spatialPatch = isSpatialShapeType(mode.shape.shapeType)
+        ? initSpatialShapeData(mode.shape.shapeType, activeStartX, activeStartY, nextW, nextH)
+        : undefined;
       mode.shape = {
         ...mode.shape,
         x: activeStartX,
         y: activeStartY,
-        width: endPt.x - activeStartX,
-        height: endPt.y - activeStartY,
+        width: nextW,
+        height: nextH,
+        ...(spatialPatch || {}),
       };
       liveShapeRef.current = { pageId: mode.pageId, shape: mode.shape };
       drawOverlay();
@@ -1962,6 +2033,78 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
             : el
         ),
       });
+      return;
+    }
+
+    if (mode.type === 'dragVertex') {
+      const otherEls = mode.snapshot.filter((el) => el.id !== mode.shapeId);
+      const snap = findBestOsnap(
+        otherEls,
+        localPt,
+        mode.origVertex,
+        osnap,
+        10 / viewport.zoom
+      );
+      let targetPt = localPt;
+      if (snap) {
+        targetPt = { x: snap.x, y: snap.y };
+        osnapCandidateRef.current = {
+          pageId: mode.pageId,
+          offsetX: mode.offsetX,
+          offsetY: mode.offsetY,
+          snap,
+        };
+        magneticGuideRef.current = null;
+      } else {
+        osnapCandidateRef.current = null;
+        if (e.shiftKey) {
+          magneticGuideRef.current = null;
+          const dx = localPt.x - mode.origVertex.x;
+          const dy = localPt.y - mode.origVertex.y;
+          const len = Math.hypot(dx, dy);
+          if (len > 1) {
+            const step = Math.PI / 4;
+            const ang = Math.round(Math.atan2(dy, dx) / step) * step;
+            targetPt = {
+              x: mode.origVertex.x + Math.cos(ang) * len,
+              y: mode.origVertex.y + Math.sin(ang) * len,
+            };
+          }
+        } else {
+          const activeShapeEl = mode.snapshot.find(
+            (el): el is ShapeItem => el.id === mode.shapeId && el.type === 'shape'
+          );
+          const mag = activeShapeEl
+            ? findMagneticVertexSnap(
+                activeShapeEl,
+                mode.vertexIdx,
+                otherEls,
+                localPt,
+                viewport.zoom
+              )
+            : null;
+          if (mag) {
+            targetPt = mag.point;
+            magneticGuideRef.current = {
+              pageId: mode.pageId,
+              offsetX: mode.offsetX,
+              offsetY: mode.offsetY,
+              guide: mag.guide,
+            };
+          } else {
+            magneticGuideRef.current = null;
+          }
+        }
+      }
+      setLiveElements({
+        pageId: mode.pageId,
+        items: mode.snapshot.map((el) =>
+          el.id === mode.shapeId && el.type === 'shape'
+            ? moveSpatialVertex(el, mode.vertexIdx, targetPt)
+            : el
+        ),
+      });
+      drawOverlay();
     }
   };
 
@@ -2025,13 +2168,17 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
       const targetPage = pages.find((p) => p.id === mode.pageId) || page;
       liveShapeRef.current = null;
       osnapCandidateRef.current = null;
+      magneticGuideRef.current = null;
       shiftAngleLineRef.current = false;
       drawOverlay();
       if (osnap.oneShot) {
         onOsnapChange((prev) => ({ ...prev, oneShot: null }));
       }
       if (Math.hypot(mode.shape.width, mode.shape.height) >= 8) {
-        onCommitPageElements(targetPage.id, [...targetPage.elements, mode.shape]);
+        const finalShape = isSpatialShapeType(mode.shape.shapeType)
+          ? withRecomputedSpatialBBox(mode.shape)
+          : mode.shape;
+        onCommitPageElements(targetPage.id, [...targetPage.elements, finalShape]);
       }
       return;
     }
@@ -2088,8 +2235,14 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
     if (
       mode.type === 'moveSelected' ||
       mode.type === 'resizeSelected' ||
-      mode.type === 'rotateSelected'
+      mode.type === 'rotateSelected' ||
+      mode.type === 'dragVertex'
     ) {
+      if (mode.type === 'dragVertex') {
+        osnapCandidateRef.current = null;
+        magneticGuideRef.current = null;
+        drawOverlay();
+      }
       if (liveElements && liveElements.pageId === mode.pageId) {
         onCommitPageElements(mode.pageId, liveElements.items);
       }
@@ -2774,6 +2927,68 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
             </div>
           )}
 
+          {/* Spatial 3D vertex labels & cross-section vertex controls */}
+          {selectedElements.length === 1 &&
+            selectedElements[0].type === 'shape' &&
+            isSpatialShapeType(selectedElements[0].shapeType) && (
+              <div className="flex items-center gap-1 pl-1 border-l border-slate-200 dark:border-slate-700">
+                <button
+                  type="button"
+                  onClick={() =>
+                    updateSelectedElements((el) =>
+                      el.type === 'shape' && el.spatialMeta
+                        ? {
+                            ...el,
+                            spatialMeta: {
+                              ...el.spatialMeta,
+                              showLabels: !el.spatialMeta.showLabels,
+                            },
+                          }
+                        : el
+                    )
+                  }
+                  title="Hiện / Ẩn ký hiệu tên đỉnh (S, A, B, C...)"
+                  className={`h-6 px-1.5 rounded-md text-[10px] font-semibold cursor-pointer border ${
+                    selectedElements[0].spatialMeta?.showLabels
+                      ? 'border-emerald-600 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300'
+                      : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  Tên đỉnh
+                </button>
+                {selectedElements[0].shapeType === 'crossSection' && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateSelectedElements((el) =>
+                          el.type === 'shape' ? addVertexToPolygonShape(el) : el
+                        )
+                      }
+                      title="Thêm đỉnh thiết diện"
+                      className="h-6 px-1.5 rounded-md text-[10px] font-semibold border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                    >
+                      + Đỉnh
+                    </button>
+                    {(selectedElements[0].vertices?.length || 0) > 3 && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updateSelectedElements((el) =>
+                            el.type === 'shape' ? removeVertexFromPolygonShape(el) : el
+                          )
+                        }
+                        title="Bớt 1 đỉnh thiết diện"
+                        className="h-6 px-1.5 rounded-md text-[10px] font-semibold border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                      >
+                        - Đỉnh
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+
           <div className="w-px h-4 bg-slate-200 dark:bg-slate-700 mx-0.5" />
 
           <button
@@ -2885,6 +3100,48 @@ export const WhiteboardCanvas: React.FC<WhiteboardCanvasProps> = ({
           })}
         </div>
       )}
+
+      {/* Draggable 3D / Spatial Vertex Handles */}
+      {activeTool === 'select' &&
+        !editingText &&
+        selectedElements.length === 1 &&
+        selectedElements[0].type === 'shape' &&
+        selectedElements[0].vertices &&
+        selectedElements[0].vertices.length > 0 && (
+          <div className="pointer-events-none absolute inset-0 z-20">
+            {selectedElements[0].vertices.map((v, idx) => {
+              const sx = (v.x + activeOffsetX) * viewport.zoom + viewport.offsetX;
+              const sy = (v.y + activeOffsetY) * viewport.zoom + viewport.offsetY;
+              const targetShape = selectedElements[0] as ShapeItem;
+              return (
+                <div
+                  key={`${targetShape.id}-v-${idx}`}
+                  onPointerDown={(e) => {
+                    e.stopPropagation();
+                    osnapCandidateRef.current = null;
+                    interactionRef.current = {
+                      type: 'dragVertex',
+                      pageId: page.id,
+                      offsetX: activeOffsetX,
+                      offsetY: activeOffsetY,
+                      shapeId: targetShape.id,
+                      vertexIdx: idx,
+                      origVertex: { x: v.x, y: v.y },
+                      snapshot: page.elements,
+                    };
+                    setLiveElements({ pageId: page.id, items: page.elements });
+                    canvasRef.current?.setPointerCapture(e.pointerId);
+                  }}
+                  title={`Kéo chỉnh đỉnh ${v.label || idx + 1} (giữ Shift để khóa góc 45°)`}
+                  style={{ left: sx, top: sy }}
+                  className="pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2 w-3.5 h-3.5 rounded-full bg-emerald-500 border-2 border-white shadow-md cursor-move hover:scale-125 transition-transform flex items-center justify-center"
+                >
+                  <span className="w-1 h-1 rounded-full bg-white pointer-events-none" />
+                </div>
+              );
+            })}
+          </div>
+        )}
 
       {/* Inline Text / Sticky Note Editor */}
       {editingEl && (editingEl.type === 'text' || editingEl.type === 'sticky') && (

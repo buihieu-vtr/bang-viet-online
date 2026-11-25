@@ -44,6 +44,8 @@ import {
   ToolType,
 } from '../types/inkboard';
 import { ColorPalettePicker } from './ColorPalettePicker';
+import { SpatialShapeIcon } from './SpatialShapeIcon';
+import { SPATIAL_SHAPE_CATALOG } from '../utils/geometry3d';
 
 interface ToolDockProps {
   activeTool: ToolType;
@@ -543,7 +545,7 @@ export const ToolDock: React.FC<ToolDockProps> = ({
         {openMenu === 'shape' && (
           <div className={`${isCompact ? 'w-full' : 'w-76 max-h-[75dvh] overflow-y-auto'} rounded-xl bg-white dark:bg-[#1B1F27] border border-slate-200 dark:border-slate-700 shadow-xl p-3 space-y-3`}>
             <div className="text-xs font-semibold text-slate-900 dark:text-slate-100">
-              Chọn hình học
+              Hình học 2D &amp; Ký hiệu
             </div>
             <div className="grid grid-cols-4 gap-1.5">
               {SHAPE_OPTIONS.map((s) => (
@@ -564,6 +566,40 @@ export const ToolDock: React.FC<ToolDockProps> = ({
                   {s.icon}
                 </button>
               ))}
+            </div>
+
+            <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-slate-900 dark:text-slate-100">
+                  Không gian 3D &amp; Mặt phẳng
+                </span>
+                <span className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                  Kéo đỉnh tự do
+                </span>
+              </div>
+              <div className="grid grid-cols-3 gap-1.5">
+                {SPATIAL_SHAPE_CATALOG.map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    title={`${s.label} — ${s.description}`}
+                    onClick={() => {
+                      onSelectShape(s.id);
+                      onSelectTool('shape');
+                    }}
+                    className={`h-12 px-1 rounded-lg flex flex-col items-center justify-center gap-0.5 border transition-colors cursor-pointer ${
+                      activeShape === s.id
+                        ? 'border-emerald-600 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300'
+                        : 'border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                    }`}
+                  >
+                    <SpatialShapeIcon kind={s.id} className="w-4.5 h-4.5 shrink-0" />
+                    <span className="text-[10px] leading-none font-medium truncate max-w-full">
+                      {s.shortLabel}
+                    </span>
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* Shape Line Style & Border Thickness (placed directly below shape picker for instant access) */}

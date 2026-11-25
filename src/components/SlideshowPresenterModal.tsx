@@ -53,6 +53,8 @@ import {
 import { PptxDeck, PptxSlide, PptxTransition } from '../types/pptx';
 import { isLinearShapeType, OSNAP_META } from '../utils/osnap';
 import { getTemplateColors } from '../utils/renderer';
+import { SPATIAL_SHAPE_CATALOG } from '../utils/geometry3d';
+import { SpatialShapeIcon } from './SpatialShapeIcon';
 import { ColorPalettePicker } from './ColorPalettePicker';
 import { PptxSlideStage } from './PptxSlideStage';
 import {
@@ -1696,9 +1698,9 @@ export const SlideshowPresenterModal: React.FC<SlideshowPresenterModalProps> = (
             )}
 
             {openMenu === 'shape' && (
-              <div className="w-76 space-y-3">
+              <div className="w-80 max-h-[72dvh] overflow-y-auto pr-0.5 space-y-3">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold">Hình học &amp; Vẽ kỹ thuật</span>
+                  <span className="text-xs font-semibold">Hình học 2D &amp; Kỹ thuật</span>
                   <span className="text-[10px] text-emerald-400">Shift: 8 góc · Chuột phải: OSNAP</span>
                 </div>
 
@@ -1721,6 +1723,36 @@ export const SlideshowPresenterModal: React.FC<SlideshowPresenterModalProps> = (
                       {s.icon}
                     </button>
                   ))}
+                </div>
+
+                <div className="pt-2 border-t border-white/10 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold">Không gian 3D &amp; Mặt phẳng</span>
+                    <span className="text-[10px] text-emerald-400">Chọn hình để kéo đỉnh</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {SPATIAL_SHAPE_CATALOG.map((s) => (
+                      <button
+                        key={s.id}
+                        type="button"
+                        title={`${s.label} — ${s.description}`}
+                        onClick={() => {
+                          setActiveShape(s.id);
+                          setTool('shape');
+                        }}
+                        className={`h-11 px-1 rounded-lg flex flex-col items-center justify-center gap-0.5 border cursor-pointer transition-colors ${
+                          activeShape === s.id
+                            ? 'border-emerald-500 bg-emerald-600/30 text-white'
+                            : 'border-white/15 text-slate-300 hover:bg-white/10'
+                        }`}
+                      >
+                        <SpatialShapeIcon kind={s.id} className="w-4 h-4 shrink-0" />
+                        <span className="text-[9.5px] leading-none font-medium truncate max-w-full">
+                          {s.shortLabel}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-3 gap-1 p-1 rounded-lg bg-slate-800">

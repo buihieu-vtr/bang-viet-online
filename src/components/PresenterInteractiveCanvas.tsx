@@ -30,11 +30,21 @@ import {
   uid,
 } from '../utils/geometry';
 import {
+  initSpatialShapeData,
+  isSpatialShapeType,
+  moveSpatialVertex,
+  withRecomputedSpatialBBox,
+} from '../utils/geometry3d';
+import {
   EllipseSnapInfo,
   findBestOsnap,
+  findMagneticLineSnap,
+  findMagneticVertexSnap,
   isLinearShapeType,
+  MagneticGuide,
   OSNAP_META,
   renderAngleHud,
+  renderMagneticGuide,
   renderOsnapMarker,
   resolveDeferredTangentStart,
   SnapCandidate,
@@ -99,6 +109,14 @@ type InteractionState =
   | {
       type: 'resizeSelected';
       origBox: { x: number; y: number; width: number; height: number };
+      origElements: BoardElement[];
+      previewElements: BoardElement[];
+    }
+  | {
+      type: 'dragVertex';
+      shapeId: string;
+      vertexIdx: number;
+      origVertex: { x: number; y: number };
       origElements: BoardElement[];
       previewElements: BoardElement[];
     };
@@ -183,6 +201,7 @@ export const PresenterInteractiveCanvas: React.FC<PresenterInteractiveCanvasProp
   const activePointerIdRef = useRef<number | null>(null);
   const cursorPtRef = useRef<{ x: number; y: number } | null>(null);
   const osnapCandidateRef = useRef<SnapCandidate | null>(null);
+  const magneticGuideRef = useRef<MagneticGuide | null>(null);
   const shiftAngleLineRef = useRef(false);
   const laserPointsRef = useRef<LaserPoint[]>([]);
   const laserRafRef = useRef(0);
@@ -253,7 +272,7 @@ export const PresenterInteractiveCanvas: React.FC<PresenterInteractiveCanvasProp
     const listToRender =
       mode.type === 'eraseStroke' || mode.type === 'erasePartial'
         ? mode.items
-        : mode.type === 'moveSelected' || mode.type === 'resizeSelected'
+        : mode.type === 'moveSelected' || mode.type === 'resizeSelected' || mode.type === 'dragVertex'
           ? mode.previewElements
           : elements;
 
@@ -317,7 +336,14 @@ export const PresenterInteractiveCanvas: React.FC<PresenterInteractiveCanvasProp
       }
     }
 
-    if (osnapCandidateRef.current && (tool === 'shape' || mode.type === 'shape')) {
+    if (magneticGuideRef.current && (mode.type === 'shape' || mode.type === 'dragVertex')) {
+      renderMagneticGuide(ctx, magneticGuideRef.current, scale);
+    }
+
+    if (
+      osnapCandidateRef.current &&
+      (tool === 'shape' || mode.type === 'shape' || mode.type === 'dragVertex')
+    ) {
       renderOsnapMarker(ctx, osnapCandidateRef.current, scale);
     }
 
@@ -352,10 +378,10 @@ export const PresenterInteractiveCanvas: React.FC<PresenterInteractiveCanvasProp
       ctx.restore();
     }
 
-    // Selection bounding box & resize handle
+    // Selection bounding box, resize handle & 3D vertex handles
     if (selectedIds.length > 0 && tool === 'select') {
       const sourceList =
-        mode.type === 'moveSelected' || mode.type === 'resizeSelected'
+        mode.type === 'moveSelected' || mode.type === 'resizeSelected' || mode.type === 'dragVertex'
           ? mode.previewElements
           : elements;
       const selectedEls = sourceList.filter((el) => selectedIds.includes(el.id));
@@ -376,6 +402,23 @@ export const PresenterInteractiveCanvas: React.FC<PresenterInteractiveCanvasProp
         ctx.lineWidth = 2 / scale;
         ctx.fillRect(hx - hs / 2, hy - hs / 2, hs, hs);
         ctx.strokeRect(hx - hs / 2, hy - hs / 2, hs, hs);
+
+        if (
+          selectedEls.length === 1 &&
+          selectedEls[0].type === 'shape' &&
+          selectedEls[0].vertices &&
+          selectedEls[0].vertices.length > 0
+        ) {
+          for (const v of selectedEls[0].vertices) {
+            ctx.beginPath();
+            ctx.arc(v.x, v.y, 5.5 / scale, 0, Math.PI * 2);
+            ctx.fillStyle = '#10B981';
+            ctx.fill();
+            ctx.lineWidth = 2 / scale;
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.stroke();
+          }
+        }
         ctx.restore();
       }
     }
@@ -541,6 +584,27 @@ export const PresenterInteractiveCanvas: React.FC<PresenterInteractiveCanvasProp
     }
 
     if (tool === 'select') {
+      // 0. Check 3D / spatial vertex handles when a single spatial shape is selected
+      if (selectedIds.length === 1) {
+        const single = elements.find((el) => el.id === selectedIds[0]);
+        if (single && single.type === 'shape' && single.vertices && single.vertices.length > 0) {
+          for (let idx = 0; idx < single.vertices.length; idx++) {
+            const v = single.vertices[idx];
+            if (dist(pt, v) <= 13 / scale) {
+              interactionRef.current = {
+                type: 'dragVertex',
+                shapeId: single.id,
+                vertexIdx: idx,
+                origVertex: { x: v.x, y: v.y },
+                origElements: elements,
+                previewElements: elements,
+              };
+              return;
+            }
+          }
+        }
+      }
+
       // 1. Check resize handle if we have a selection
       if (selectedIds.length > 0) {
         const selectedEls = elements.filter((el) => selectedIds.includes(el.id));
@@ -659,6 +723,9 @@ export const PresenterInteractiveCanvas: React.FC<PresenterInteractiveCanvasProp
         dashed: shapeLineStyle !== 'solid',
         rows: 3,
         cols: 3,
+        ...(isSpatialShapeType(activeShape)
+          ? initSpatialShapeData(activeShape, sx, sy, 1, 1)
+          : {}),
       };
       interactionRef.current = {
         type: 'shape',
@@ -810,6 +877,66 @@ export const PresenterInteractiveCanvas: React.FC<PresenterInteractiveCanvasProp
       return;
     }
 
+    if (mode.type === 'dragVertex') {
+      const otherEls = visibleSnappableElements().filter((el) => el.id !== mode.shapeId);
+      const snap = findBestOsnap(
+        otherEls,
+        pt,
+        mode.origVertex,
+        osnap,
+        10 / scale
+      );
+      let targetPt = pt;
+      if (snap) {
+        targetPt = { x: snap.x, y: snap.y };
+        osnapCandidateRef.current = snap;
+        magneticGuideRef.current = null;
+      } else {
+        osnapCandidateRef.current = null;
+        if (e.shiftKey) {
+          magneticGuideRef.current = null;
+          const dx = pt.x - mode.origVertex.x;
+          const dy = pt.y - mode.origVertex.y;
+          const len = Math.hypot(dx, dy);
+          if (len > 1) {
+            const step = Math.PI / 4;
+            const ang = Math.round(Math.atan2(dy, dx) / step) * step;
+            targetPt = {
+              x: mode.origVertex.x + Math.cos(ang) * len,
+              y: mode.origVertex.y + Math.sin(ang) * len,
+            };
+          }
+        } else {
+          const activeShapeEl = mode.origElements.find(
+            (el): el is ShapeItem => el.id === mode.shapeId && el.type === 'shape'
+          );
+          const mag = activeShapeEl
+            ? findMagneticVertexSnap(
+                activeShapeEl,
+                mode.vertexIdx,
+                otherEls,
+                pt,
+                scale
+              )
+            : null;
+          if (mag) {
+            targetPt = mag.point;
+            magneticGuideRef.current = mag.guide;
+          } else {
+            magneticGuideRef.current = null;
+          }
+        }
+      }
+      mode.previewElements = mode.origElements.map((el) =>
+        el.id === mode.shapeId && el.type === 'shape'
+          ? moveSpatialVertex(el, mode.vertexIdx, targetPt)
+          : el
+      );
+      drawBase();
+      drawOverlay();
+      return;
+    }
+
     if (mode.type === 'shape') {
       const isLinear = isLinearShapeType(mode.shape.shapeType);
       const baseStartX = mode.deferredAnchor ? mode.deferredAnchor.x : mode.startX;
@@ -866,9 +993,11 @@ export const PresenterInteractiveCanvas: React.FC<PresenterInteractiveCanvasProp
           osnapCandidateRef.current = snap;
         }
         shiftAngleLineRef.current = false;
+        magneticGuideRef.current = null;
       } else {
         osnapCandidateRef.current = null;
         if (e.shiftKey) {
+          magneticGuideRef.current = null;
           if (isLinear) {
             const rawW = pt.x - baseStartX;
             const rawH = pt.y - baseStartY;
@@ -896,15 +1025,37 @@ export const PresenterInteractiveCanvas: React.FC<PresenterInteractiveCanvasProp
           }
         } else {
           shiftAngleLineRef.current = false;
+          if (isLinear) {
+            const mag = findMagneticLineSnap(
+              visibleSnappableElements(),
+              { x: baseStartX, y: baseStartY },
+              pt,
+              scale
+            );
+            if (mag) {
+              endPt = mag.point;
+              magneticGuideRef.current = mag.guide;
+            } else {
+              magneticGuideRef.current = null;
+            }
+          } else {
+            magneticGuideRef.current = null;
+          }
         }
       }
 
+      const nextW = endPt.x - activeStartX;
+      const nextH = endPt.y - activeStartY;
+      const spatialPatch = isSpatialShapeType(mode.shape.shapeType)
+        ? initSpatialShapeData(mode.shape.shapeType, activeStartX, activeStartY, nextW, nextH)
+        : undefined;
       mode.shape = {
         ...mode.shape,
         x: activeStartX,
         y: activeStartY,
-        width: endPt.x - activeStartX,
-        height: endPt.y - activeStartY,
+        width: nextW,
+        height: nextH,
+        ...(spatialPatch || {}),
       };
       drawOverlay();
       return;
@@ -977,13 +1128,17 @@ export const PresenterInteractiveCanvas: React.FC<PresenterInteractiveCanvasProp
 
     if (mode.type === 'shape') {
       osnapCandidateRef.current = null;
+      magneticGuideRef.current = null;
       shiftAngleLineRef.current = false;
       drawOverlay();
       if (osnap.oneShot) {
         onOsnapChange((prev) => ({ ...prev, oneShot: null }));
       }
       if (Math.hypot(mode.shape.width, mode.shape.height) >= 8) {
-        onCommitElements([...elements, mode.shape]);
+        const finalShape = isSpatialShapeType(mode.shape.shapeType)
+          ? withRecomputedSpatialBBox(mode.shape)
+          : mode.shape;
+        onCommitElements([...elements, finalShape]);
       }
       return;
     }
@@ -1034,7 +1189,11 @@ export const PresenterInteractiveCanvas: React.FC<PresenterInteractiveCanvasProp
       return;
     }
 
-    if (mode.type === 'moveSelected' || mode.type === 'resizeSelected') {
+    if (mode.type === 'moveSelected' || mode.type === 'resizeSelected' || mode.type === 'dragVertex') {
+      if (mode.type === 'dragVertex') {
+        osnapCandidateRef.current = null;
+        magneticGuideRef.current = null;
+      }
       onCommitElements(mode.previewElements);
       drawOverlay();
     }
@@ -1094,6 +1253,7 @@ export const PresenterInteractiveCanvas: React.FC<PresenterInteractiveCanvasProp
         onPointerLeave={() => {
           cursorPtRef.current = null;
           osnapCandidateRef.current = null;
+          magneticGuideRef.current = null;
           drawOverlay();
         }}
         onDoubleClick={handleDoubleClick}
