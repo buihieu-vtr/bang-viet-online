@@ -793,6 +793,7 @@ export default function App() {
     const onKeyDown = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (slideshowOpen) return;
 
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault();
@@ -834,7 +835,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [handleUndo, handleRedo, handleSave, handleOpenFileTrigger]);
+  }, [slideshowOpen, handleUndo, handleRedo, handleSave, handleOpenFileTrigger]);
 
   const getLocalPageCenter = () => {
     const sideOffset = tocOpen && window.innerWidth >= 768 ? 236 : 0;
@@ -1775,6 +1776,11 @@ export default function App() {
         pptxDeck={doc.pptxDeck}
         initialPageId={activePage.id}
         stylusSettings={stylusSettings}
+        osnap={osnap}
+        onOsnapChange={setOsnap}
+        customColors={customColors}
+        onAddCustomColor={handleAddCustomColor}
+        onRemoveCustomColor={handleRemoveCustomColor}
         onCommitPageElements={handleCommitPageElements}
         onSelectActivePage={(pageId) => {
           setDoc((prev) =>
