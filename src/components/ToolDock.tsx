@@ -21,6 +21,7 @@ import {
   Pencil,
   Plus,
   PlusSquare,
+  Presentation,
   Shapes,
   Sigma,
   Square,
@@ -69,6 +70,7 @@ interface ToolDockProps {
   onShapeStrokeWidthChange: (w: number) => void;
   onTriggerImageUpload: () => void;
   onImportPdf: () => void;
+  onImportPptx: () => void;
   onInsertSticky: (bg: string, text: string) => void;
   onInsertMath: () => void;
   onInsertAxesPreset: () => void;
@@ -126,6 +128,7 @@ export const ToolDock: React.FC<ToolDockProps> = ({
   onShapeStrokeWidthChange,
   onTriggerImageUpload,
   onImportPdf,
+  onImportPptx,
   onInsertSticky,
   onInsertMath,
   onInsertAxesPreset,
@@ -731,6 +734,18 @@ export const ToolDock: React.FC<ToolDockProps> = ({
             >
               <FileText className="w-4 h-4 text-rose-500" />
               Nhập tài liệu PDF (.pdf)
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setOpenMenu(null);
+                onImportPptx();
+              }}
+              className="w-full px-2.5 py-2 rounded-lg text-left text-xs font-medium text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-950/40 flex items-center gap-2.5 cursor-pointer"
+            >
+              <Presentation className="w-4 h-4 text-orange-500" />
+              Nhập PowerPoint (.pptx)
             </button>
 
             <button

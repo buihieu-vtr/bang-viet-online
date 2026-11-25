@@ -1,3 +1,5 @@
+import type { PptxDeck } from './pptx';
+
 export type ToolType =
   | 'select'
   | 'pen'
@@ -152,6 +154,7 @@ export interface NotebookDocument {
   activePageId: string;
   pages: BoardPage[];
   version: number;
+  pptxDeck?: PptxDeck;
 }
 
 export interface WebBoardMeta {

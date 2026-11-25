@@ -5,6 +5,7 @@ import {
   FilePlus,
   FileText,
   FolderOpen,
+  Presentation,
   Search,
   Trash2,
   X,
@@ -22,6 +23,7 @@ interface NotebooksModalProps {
   onDeleteNotebook: (id: string) => void;
   onImportFile: () => void;
   onImportPdf: () => void;
+  onImportPptx: () => void;
 }
 
 export const NotebooksModal: React.FC<NotebooksModalProps> = ({
@@ -35,6 +37,7 @@ export const NotebooksModal: React.FC<NotebooksModalProps> = ({
   onDeleteNotebook,
   onImportFile,
   onImportPdf,
+  onImportPptx,
 }) => {
   const [query, setQuery] = useState('');
 
@@ -91,6 +94,14 @@ export const NotebooksModal: React.FC<NotebooksModalProps> = ({
             >
               <FileText className="w-3.5 h-3.5" />
               Nhập PDF
+            </button>
+            <button
+              type="button"
+              onClick={onImportPptx}
+              className="h-9 px-3 rounded-lg border border-orange-200 dark:border-orange-800/70 bg-orange-50/70 dark:bg-orange-950/30 text-xs font-medium text-orange-700 dark:text-orange-300 hover:bg-orange-100/70 flex items-center gap-1.5 cursor-pointer"
+            >
+              <Presentation className="w-3.5 h-3.5" />
+              Nhập PowerPoint
             </button>
             <button
               type="button"

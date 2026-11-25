@@ -5,6 +5,7 @@ import {
   NotebookDocument,
   PAGE_DIMENSIONS,
 } from '../types/inkboard';
+import type { PptxDeck } from '../types/pptx';
 import { getCombinedBBox, uid } from './geometry';
 import {
   drawTemplatePattern,
@@ -34,20 +35,57 @@ function openDB(): Promise<IDBDatabase> {
   });
 }
 
+export async function savePptxDeckToDB(notebookId: string, deck: PptxDeck): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve) => {
+    const tx = db.transaction(STORE_META, 'readwrite');
+    tx.objectStore(STORE_META).put({ key: `pptx_${notebookId}`, value: deck });
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => resolve();
+  });
+}
+
+export async function loadPptxDeckFromDB(notebookId: string): Promise<PptxDeck | null> {
+  const db = await openDB();
+  return new Promise((resolve) => {
+    const tx = db.transaction(STORE_META, 'readonly');
+    const req = tx.objectStore(STORE_META).get(`pptx_${notebookId}`);
+    req.onsuccess = () => resolve((req.result?.value as PptxDeck) ?? null);
+    req.onerror = () => resolve(null);
+  });
+}
+
+export async function deletePptxDeckFromDB(notebookId: string): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve) => {
+    const tx = db.transaction(STORE_META, 'readwrite');
+    tx.objectStore(STORE_META).delete(`pptx_${notebookId}`);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => resolve();
+  });
+}
+
 export async function listNotebooks(ownerScope = 'guest'): Promise<NotebookDocument[]> {
   const db = await openDB();
-  return new Promise((resolve, reject) => {
+  const list = await new Promise<NotebookDocument[]>((resolve, reject) => {
     const tx = db.transaction(STORE_NOTEBOOKS, 'readonly');
     const store = tx.objectStore(STORE_NOTEBOOKS);
     const req = store.getAll();
     req.onsuccess = () => {
-      const list = (req.result as NotebookDocument[])
+      const filtered = (req.result as NotebookDocument[])
         .filter((n) => (n.ownerId || 'guest') === ownerScope)
         .sort((a, b) => b.updatedAt - a.updatedAt);
-      resolve(list);
+      resolve(filtered);
     };
     req.onerror = () => reject(req.error);
   });
+  return Promise.all(
+    list.map(async (nb) => {
+      if (nb.pptxDeck) return nb;
+      const deck = await loadPptxDeckFromDB(nb.id);
+      return deck ? { ...nb, pptxDeck: deck } : nb;
+    })
+  );
 }
 
 export async function saveNotebookToDB(
@@ -55,26 +93,31 @@ export async function saveNotebookToDB(
   ownerScope = 'guest'
 ): Promise<void> {
   const db = await openDB();
+  const { pptxDeck, ...rest } = doc;
   const scopedDoc: NotebookDocument = {
-    ...doc,
+    ...rest,
     ownerId: doc.ownerId || ownerScope,
   };
-  return new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(STORE_NOTEBOOKS, 'readwrite');
     tx.objectStore(STORE_NOTEBOOKS).put(scopedDoc);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
+  if (pptxDeck) {
+    await savePptxDeckToDB(doc.id, pptxDeck);
+  }
 }
 
 export async function deleteNotebookFromDB(id: string): Promise<void> {
   const db = await openDB();
-  return new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(STORE_NOTEBOOKS, 'readwrite');
     tx.objectStore(STORE_NOTEBOOKS).delete(id);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
+  await deletePptxDeckFromDB(id);
 }
 
 export async function getLastActiveNotebookId(ownerScope = 'guest'): Promise<string | null> {

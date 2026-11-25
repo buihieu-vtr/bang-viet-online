@@ -19,6 +19,8 @@ import {
   Palette,
   PanelLeft,
   PenLine,
+  Play,
+  Presentation,
   Redo2,
   Ruler,
   Save,
@@ -90,6 +92,9 @@ interface TopBarProps {
   onNewNotebook: () => void;
   onOpenFile: () => void;
   onImportPdf: () => void;
+  onImportPptx: () => void;
+  onStartSlideshow: () => void;
+  hasPptx?: boolean;
   onSave: () => void;
   onOpenSaveAs: () => void;
   onOpenWebLink: () => void;
@@ -141,6 +146,9 @@ export const TopBar: React.FC<TopBarProps> = ({
   onNewNotebook,
   onOpenFile,
   onImportPdf,
+  onImportPptx,
+  onStartSlideshow,
+  hasPptx = false,
   onSave,
   onOpenSaveAs,
   onOpenWebLink,
@@ -560,6 +568,20 @@ export const TopBar: React.FC<TopBarProps> = ({
                 </span>
               </button>
 
+              <button
+                type="button"
+                onClick={() => {
+                  setFileMenuOpen(false);
+                  onImportPptx();
+                }}
+                className="w-full px-3.5 py-2 text-left text-xs font-medium text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-950/40 flex items-center justify-between cursor-pointer"
+              >
+                <span className="flex items-center gap-2.5">
+                  <Presentation className="w-4 h-4 text-orange-500" />
+                  Nhập PowerPoint (.pptx)...
+                </span>
+              </button>
+
               <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
 
               <button
@@ -787,6 +809,20 @@ export const TopBar: React.FC<TopBarProps> = ({
 
         <button
           type="button"
+          onClick={onStartSlideshow}
+          title="Trình chiếu PowerPoint & Viết trực tiếp lên slide (Phím F5)"
+          className={`h-8 px-2.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+            hasPptx
+              ? 'bg-orange-600 hover:bg-orange-700 text-white shadow-xs'
+              : 'border border-orange-200 dark:border-orange-800/70 bg-orange-50/70 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300 hover:bg-orange-100 dark:hover:bg-orange-900/50'
+          }`}
+        >
+          <Play className="w-3.5 h-3.5 fill-current" />
+          <span className="hidden sm:inline">Trình chiếu</span>
+        </button>
+
+        <button
+          type="button"
           onClick={onOpenWebLink}
           title="Tạo Link Web chia sẻ & Tên miền riêng (Không cần Server)"
           className={`hidden sm:flex h-8 px-2 rounded-lg text-xs font-medium items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
@@ -864,6 +900,21 @@ export const TopBar: React.FC<TopBarProps> = ({
 
           {moreMenuOpen && (
             <div className="fixed right-2 top-12 w-60 max-h-[calc(100dvh-64px)] overflow-y-auto rounded-xl bg-white dark:bg-[#1B1F27] border border-slate-200 dark:border-slate-700 shadow-xl py-1.5 z-50">
+              <button
+                type="button"
+                onClick={() => {
+                  setMoreMenuOpen(false);
+                  onStartSlideshow();
+                }}
+                className="w-full px-3.5 py-2.5 text-left text-xs font-semibold text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-950/40 flex items-center justify-between cursor-pointer"
+              >
+                <span className="flex items-center gap-2.5">
+                  <Play className="w-4 h-4 fill-current" />
+                  Trình chiếu &amp; Viết slide
+                </span>
+                <span className="text-[10px] font-mono-tabular opacity-75">F5</span>
+              </button>
+
               <button
                 type="button"
                 onClick={() => {

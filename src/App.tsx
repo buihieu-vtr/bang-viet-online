@@ -8,7 +8,9 @@ import { NotebooksModal } from './components/NotebooksModal';
 import { PagesDrawer } from './components/PagesDrawer';
 import { PageTocSidebar } from './components/PageTocSidebar';
 import { PdfImportModal } from './components/PdfImportModal';
+import { PptxImportModal } from './components/PptxImportModal';
 import { SaveAsModal } from './components/SaveAsModal';
+import { SlideshowPresenterModal } from './components/SlideshowPresenterModal';
 import { ToolDock } from './components/ToolDock';
 import { TopBar } from './components/TopBar';
 import { WebLinkModal } from './components/WebLinkModal';
@@ -56,6 +58,12 @@ import {
   PdfImportMode,
   renderPdfPages,
 } from './utils/pdfImport';
+import {
+  buildBoardPagesFromPptx,
+  inspectPptxFile,
+  LoadedPptxInfo,
+  PptxImportMode,
+} from './utils/pptxImport';
 import { isDarkBoardTemplate } from './utils/renderer';
 import {
   createBlankNotebook,
@@ -184,6 +192,8 @@ export default function App() {
   const [helpOpen, setHelpOpen] = useState<boolean>(false);
   const [mathModalOpen, setMathModalOpen] = useState<boolean>(false);
   const [pdfImportInfo, setPdfImportInfo] = useState<LoadedPdfInfo | null>(null);
+  const [pptxImportInfo, setPptxImportInfo] = useState<LoadedPptxInfo | null>(null);
+  const [slideshowOpen, setSlideshowOpen] = useState<boolean>(false);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [isCompactViewport, setIsCompactViewport] = useState<boolean>(() =>
     typeof window !== 'undefined'
@@ -230,6 +240,7 @@ export default function App() {
   const imageInputRef = useRef<HTMLInputElement>(null);
   const inkboardInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
+  const pptxInputRef = useRef<HTMLInputElement>(null);
   const saveTimerRef = useRef<number | null>(null);
   const hashConsumedRef = useRef(false);
 
@@ -685,6 +696,33 @@ export default function App() {
     await openPdfFileForImport(file);
   };
 
+  const openPptxFileForImport = useCallback(
+    async (file: File) => {
+      try {
+        showToast('Đang phân tích bài giảng PowerPoint (.pptx)...');
+        const info = await inspectPptxFile(file);
+        setPptxImportInfo(info);
+      } catch (err) {
+        showToast(
+          (err as Error)?.message ||
+            'Không thể đọc tệp PowerPoint này. Vui lòng dùng định dạng .pptx hợp lệ.'
+        );
+      }
+    },
+    [showToast]
+  );
+
+  const handleImportPptxTrigger = useCallback(() => {
+    pptxInputRef.current?.click();
+  }, []);
+
+  const handlePptxFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    await openPptxFileForImport(file);
+  };
+
   const handleOpenFileTrigger = useCallback(() => {
     inkboardInputRef.current?.click();
   }, []);
@@ -693,11 +731,20 @@ export default function App() {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
+    const lowerName = file.name.toLowerCase();
     if (
       file.type === 'application/pdf' ||
-      file.name.toLowerCase().endsWith('.pdf')
+      lowerName.endsWith('.pdf')
     ) {
       await openPdfFileForImport(file);
+      return;
+    }
+    if (
+      lowerName.endsWith('.pptx') ||
+      lowerName.endsWith('.ppt') ||
+      file.type.includes('presentation')
+    ) {
+      await openPptxFileForImport(file);
       return;
     }
     try {
@@ -767,6 +814,12 @@ export default function App() {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') {
         e.preventDefault();
         handleOpenFileTrigger();
+        return;
+      }
+
+      if (e.key === 'F5' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        setSlideshowOpen(true);
         return;
       }
 
@@ -977,6 +1030,97 @@ export default function App() {
     }
   };
 
+  const handleConfirmPptxImport = async ({
+    mode,
+    slideNumbers,
+    lockBackground,
+    notebookTitle,
+    startSlideshowAfter,
+    onProgress,
+    signal,
+  }: {
+    mode: PptxImportMode;
+    slideNumbers: number[];
+    lockBackground: boolean;
+    notebookTitle: string;
+    startSlideshowAfter: boolean;
+    onProgress: (done: number, total: number) => void;
+    signal: AbortSignal;
+  }) => {
+    if (!pptxImportInfo) return;
+    const { pages: newPages, filteredDeck } = await buildBoardPagesFromPptx(
+      pptxImportInfo.deck,
+      slideNumbers,
+      lockBackground,
+      onProgress,
+      signal
+    );
+    if (newPages.length === 0) return;
+
+    if (mode === 'newNotebook') {
+      const nbId = uid('nb');
+      const finalTitle = notebookTitle || pptxImportInfo.title;
+      const nb: NotebookDocument = {
+        id: nbId,
+        ownerId: ownerScope,
+        title: finalTitle,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        activePageId: newPages[0].id,
+        pages: newPages,
+        version: 1,
+        pptxDeck: {
+          ...filteredDeck,
+          notebookId: nbId,
+          title: finalTitle,
+        },
+      };
+      await saveNotebookToDB(nb, ownerScope);
+      await setLastActiveNotebookId(nb.id, ownerScope);
+      setDoc(nb);
+      setNotebooks((prev) => [nb, ...prev.filter((n) => n.id !== nb.id)]);
+      setLinkedFileHandle(null);
+      window.history.replaceState(null, '', window.location.pathname);
+      setSelectedIds([]);
+      syncPaletteForTemplate('blank');
+      if (window.innerWidth >= 768) {
+        setTocOpen(true);
+      }
+      window.setTimeout(() => triggerScrollToPage(newPages[0].id), 60);
+      showToast(`Đã nhập ${newPages.length} slide PowerPoint`);
+    } else {
+      setDoc((prev) => {
+        const mergedSlides = [
+          ...(prev.pptxDeck?.slides || []),
+          ...filteredDeck.slides,
+        ];
+        return {
+          ...prev,
+          updatedAt: Date.now(),
+          activePageId: newPages[0].id,
+          pages: [...prev.pages, ...newPages],
+          pptxDeck: {
+            notebookId: prev.id,
+            title: prev.title,
+            width: filteredDeck.width,
+            height: filteredDeck.height,
+            slides: mergedSlides,
+          },
+        };
+      });
+      setSelectedIds([]);
+      if (window.innerWidth >= 768) {
+        setTocOpen(true);
+      }
+      window.setTimeout(() => triggerScrollToPage(newPages[0].id), 60);
+      showToast(`Đã thêm ${newPages.length} slide PowerPoint vào bảng hiện tại`);
+    }
+
+    if (startSlideshowAfter) {
+      window.setTimeout(() => setSlideshowOpen(true), 80);
+    }
+  };
+
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     const file = e.dataTransfer.files?.[0];
@@ -984,6 +1128,12 @@ export default function App() {
     const lowerName = file.name.toLowerCase();
     if (file.type === 'application/pdf' || lowerName.endsWith('.pdf')) {
       openPdfFileForImport(file);
+    } else if (
+      lowerName.endsWith('.pptx') ||
+      lowerName.endsWith('.ppt') ||
+      file.type.includes('presentation')
+    ) {
+      openPptxFileForImport(file);
     } else if (file.type.startsWith('image/')) {
       const reader = new FileReader();
       reader.onload = () => {
@@ -1203,6 +1353,9 @@ export default function App() {
         }}
         onOpenFile={handleOpenFileTrigger}
         onImportPdf={handleImportPdfTrigger}
+        onImportPptx={handleImportPptxTrigger}
+        onStartSlideshow={() => setSlideshowOpen(true)}
+        hasPptx={Boolean(doc.pptxDeck && doc.pptxDeck.slides.length > 0)}
         onSave={handleSave}
         onOpenSaveAs={() => setSaveAsOpen(true)}
         onOpenWebLink={() => setWebLinkOpen(true)}
@@ -1305,6 +1458,7 @@ export default function App() {
             onShapeStrokeWidthChange={setShapeStrokeWidth}
             onTriggerImageUpload={() => imageInputRef.current?.click()}
             onImportPdf={handleImportPdfTrigger}
+            onImportPptx={handleImportPptxTrigger}
             onInsertSticky={handleInsertSticky}
             onInsertMath={() => setMathModalOpen(true)}
             onInsertAxesPreset={() => handleInsertPresetShape('axes')}
@@ -1472,7 +1626,7 @@ export default function App() {
       <input
         ref={inkboardInputRef}
         type="file"
-        accept=".inkboard,.scrbleweb,.json,.pdf"
+        accept=".inkboard,.scrbleweb,.json,.pdf,.pptx"
         onChange={handleImportFileFallback}
         className="hidden"
       />
@@ -1481,6 +1635,13 @@ export default function App() {
         type="file"
         accept="application/pdf,.pdf"
         onChange={handlePdfFileSelect}
+        className="hidden"
+      />
+      <input
+        ref={pptxInputRef}
+        type="file"
+        accept=".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        onChange={handlePptxFileSelect}
         className="hidden"
       />
 
@@ -1583,6 +1744,10 @@ export default function App() {
           setLibraryOpen(false);
           handleImportPdfTrigger();
         }}
+        onImportPptx={() => {
+          setLibraryOpen(false);
+          handleImportPptxTrigger();
+        }}
       />
 
       <PdfImportModal
@@ -1593,6 +1758,30 @@ export default function App() {
           setPdfImportInfo(null);
         }}
         onConfirmImport={handleConfirmPdfImport}
+      />
+
+      <PptxImportModal
+        open={Boolean(pptxImportInfo)}
+        pptxInfo={pptxImportInfo}
+        onClose={() => setPptxImportInfo(null)}
+        onConfirmImport={handleConfirmPptxImport}
+      />
+
+      <SlideshowPresenterModal
+        open={slideshowOpen}
+        onClose={() => setSlideshowOpen(false)}
+        deckTitle={doc.title}
+        pages={doc.pages}
+        pptxDeck={doc.pptxDeck}
+        initialPageId={activePage.id}
+        stylusSettings={stylusSettings}
+        onCommitPageElements={handleCommitPageElements}
+        onSelectActivePage={(pageId) => {
+          setDoc((prev) =>
+            prev.activePageId === pageId ? prev : { ...prev, activePageId: pageId }
+          );
+          triggerScrollToPage(pageId);
+        }}
       />
 
       <SaveAsModal

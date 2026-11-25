@@ -64,3 +64,121 @@
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(100, 116, 139, 0.45);
 }
+
+/* PowerPoint Slide Transitions & Element Animations */
+@keyframes pptxFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes pptxFadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes pptxSlideInRight {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+@keyframes pptxSlideOutLeft {
+  from { transform: translateX(0); }
+  to { transform: translateX(-100%); }
+}
+@keyframes pptxSlideInLeft {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+@keyframes pptxSlideOutRight {
+  from { transform: translateX(0); }
+  to { transform: translateX(100%); }
+}
+@keyframes pptxSlideInUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+@keyframes pptxSlideOutUp {
+  from { transform: translateY(0); }
+  to { transform: translateY(-100%); }
+}
+@keyframes pptxSlideInDown {
+  from { transform: translateY(-100%); }
+  to { transform: translateY(0); }
+}
+@keyframes pptxSlideOutDown {
+  from { transform: translateY(0); }
+  to { transform: translateY(100%); }
+}
+@keyframes pptxWipeRight {
+  from { clip-path: inset(0 100% 0 0); }
+  to { clip-path: inset(0 0 0 0); }
+}
+@keyframes pptxWipeLeft {
+  from { clip-path: inset(0 0 0 100%); }
+  to { clip-path: inset(0 0 0 0); }
+}
+@keyframes pptxWipeDown {
+  from { clip-path: inset(0 0 100% 0); }
+  to { clip-path: inset(0 0 0 0); }
+}
+@keyframes pptxWipeUp {
+  from { clip-path: inset(100% 0 0 0); }
+  to { clip-path: inset(0 0 0 0); }
+}
+@keyframes pptxSplitHorzOut {
+  from { clip-path: inset(50% 0 50% 0); }
+  to { clip-path: inset(0 0 0 0); }
+}
+@keyframes pptxSplitVertOut {
+  from { clip-path: inset(0 50% 0 50%); }
+  to { clip-path: inset(0 0 0 0); }
+}
+@keyframes pptxCircleIn {
+  from { clip-path: circle(0% at 50% 50%); }
+  to { clip-path: circle(75% at 50% 50%); }
+}
+@keyframes pptxDiamondIn {
+  from { clip-path: polygon(50% 50%, 50% 50%, 50% 50%, 50% 50%); }
+  to { clip-path: polygon(50% -50%, 150% 50%, 50% 150%, -50% 50%); }
+}
+@keyframes pptxZoomIn {
+  from { opacity: 0; transform: scale(0.35); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes pptxZoomOut {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.35); }
+}
+@keyframes pptxFloatUp {
+  from { opacity: 0; transform: translateY(42px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes pptxFloatDown {
+  from { opacity: 0; transform: translateY(-42px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes pptxBounceIn {
+  0% { opacity: 0; transform: translateY(-70px) scale(0.92); }
+  45% { opacity: 1; transform: translateY(0) scale(1); }
+  62% { transform: translateY(-22px); }
+  78% { transform: translateY(0); }
+  89% { transform: translateY(-8px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+@keyframes pptxSwivelIn {
+  from { opacity: 0; transform: perspective(900px) rotateY(90deg) scale(0.85); }
+  to { opacity: 1; transform: perspective(900px) rotateY(0deg) scale(1); }
+}
+@keyframes pptxPulse {
+  0% { transform: scale(1); }
+  45% { transform: scale(1.12); }
+  100% { transform: scale(1); }
+}
+@keyframes pptxTeeter {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(-6deg); }
+  50% { transform: rotate(6deg); }
+  75% { transform: rotate(-4deg); }
+}
+@keyframes pptxDissolveIn {
+  0% { opacity: 0; filter: blur(8px); transform: scale(1.02); }
+  100% { opacity: 1; filter: blur(0px); transform: scale(1); }
+}
+
